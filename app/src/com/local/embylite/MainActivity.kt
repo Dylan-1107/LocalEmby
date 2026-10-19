@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -24,11 +25,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -40,70 +43,99 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.HorizontalDivider
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
 
-/* ---------- 设计常量 ---------- */
-private val Accent = Color(0xFF3482FF)
-private val Success = Color(0xFF34C759)
-private val Muted = Color(0xFF8E8E93)
-private val Gap = 12.dp
+/* ---------------- 配色 ---------------- */
+private val Blue = Color(0xFF4C9AFF)
+private val Red = Color(0xFFFF453A)
+private val Orange = Color(0xFFFF9F0A)
+private val Green = Color(0xFF30D158)
+
+private data class Palette(
+    val bg: Color,
+    val card: Color,
+    val cardAlt: Color,
+    val text: Color,
+    val sub: Color,
+    val divider: Color,
+)
+
+private val DarkPalette = Palette(
+    bg = Color(0xFF000000),
+    card = Color(0xFF1C1C1E),
+    cardAlt = Color(0xFF232326),
+    text = Color(0xFFFFFFFF),
+    sub = Color(0xFF8E8E93),
+    divider = Color(0xFF2C2C2E),
+)
+
+private val LightPalette = Palette(
+    bg = Color(0xFFF2F2F7),
+    card = Color(0xFFFFFFFF),
+    cardAlt = Color(0xFFF7F7FA),
+    text = Color(0xFF111114),
+    sub = Color(0xFF8A8A8E),
+    divider = Color(0xFFE5E5EA),
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MiuixTheme(
-                colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-            ) {
-                HomeScreen()
-            }
+            val p = if (isSystemInDarkTheme()) DarkPalette else LightPalette
+            HomeScreen(p)
         }
     }
 }
 
 @Composable
-private fun HomeScreen() {
+private fun HomeScreen(p: Palette) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val scroll = rememberScrollState()
 
     var running by remember { mutableStateOf(HttpService.isServiceRunning) }
     var port by remember { mutableStateOf(Settings.getPort(ctx)) }
-    var treeLabel by remember { mutableStateOf(treeDisplayPath(ctx)) }
+    var uptimeMin by remember { mutableStateOf(0L) }
     var count by remember { mutableStateOf(-1) }
+    var treeLabel by remember { mutableStateOf(treeDisplayPath(ctx)) }
     var lanIp by remember { mutableStateOf(lanIpAddress()) }
-    var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
-
+    var memMb by remember { mutableStateOf(0L) }
+    var threads by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(0) }
     var editingPort by remember { mutableStateOf(false) }
     var portDraft by remember { mutableStateOf(port.toString()) }
     var editingDanmu by remember { mutableStateOf(false) }
     var danmuDraft by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
+    var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
 
     LaunchedEffect(Unit) {
         while (true) {
             running = HttpService.isServiceRunning
             port = Settings.getPort(ctx)
-            delay(1000)
+            uptimeMin = if (running && HttpService.startedAt > 0)
+                (System.currentTimeMillis() - HttpService.startedAt) / 60000 else 0
+            val rt = Runtime.getRuntime()
+            memMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+            threads = Thread.activeCount()
+            lanIp = lanIpAddress()
+            delay(2000)
         }
     }
 
@@ -120,8 +152,21 @@ private fun HomeScreen() {
                 runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
                     .getOrDefault(-1)
             }
-            toast(ctx, if (count >= 0) "已刷新，共 $count 部视频" else "扫描失败，请查看日志")
+            toast(ctx, if (count >= 0) "已刷新，共 $count 部" else "扫描失败，请查看日志")
         }
+    }
+
+    fun toggleServer() {
+        if (running) {
+            Settings.setServerEnabled(ctx, false)
+            ctx.stopService(Intent(ctx, HttpService::class.java))
+        } else {
+            Settings.setServerEnabled(ctx, true)
+            val i = Intent(ctx, HttpService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+        }
+        autoStart = Settings.isServerEnabled(ctx)
+        running = HttpService.isServiceRunning
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -139,164 +184,173 @@ private fun HomeScreen() {
                     runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
                         .getOrDefault(-1)
                 }
-                toast(ctx, "已选择目录，共 $count 部视频")
+                toast(ctx, "已选择目录，共 $count 部")
             }
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        SmallTopAppBar(title = "本地影院")
-
+    Box(Modifier.fillMaxSize().background(p.bg)) {
         Column(
             Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
+                .fillMaxSize()
+                .verticalScroll(scroll)
+                .statusBarsPadding()
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "本地影院",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = p.text,
+                letterSpacing = (-0.5).sp
+            )
+            Spacer(Modifier.height(2.dp))
+            Text("本地 Emby 服务器", fontSize = 13.sp, color = p.sub)
 
-            /* ========== 状态主卡 ========== */
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusPill(running)
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = "端口 $port",
-                        fontSize = 12.sp,
-                        color = Muted
-                    )
+            Spacer(Modifier.height(16.dp))
+
+            HeroCard(p, running, uptimeMin, port)
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(p.card, RoundedCornerShape(18.dp))
+                    .height(56.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ActionCell(if (running) "停止" else "启动", if (running) Red else Blue, Modifier.weight(1f)) {
+                    toggleServer()
                 }
+                VDivider(p)
+                ActionCell("复制", Blue, Modifier.weight(1f)) {
+                    copy(ctx, "http://127.0.0.1:$port")
+                }
+                VDivider(p)
+                ActionCell("刷新", Orange, Modifier.weight(1f)) { rescan() }
+            }
 
-                Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
-                // 主视觉：本机地址
-                Text(
-                    text = "http://127.0.0.1:$port",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.2.sp,
-                    maxLines = 1
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = if (running) "在 Hills / YAmby 中添加此地址即可连接" else "启动服务器后可连接",
-                    fontSize = 12.sp,
-                    color = Muted
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                InfoCard(p, "媒体库", if (count < 0) "统计中" else "$count 部视频", Modifier.weight(1f)) {
+                    picker.launch(null)
+                }
+                InfoCard(p, "日志", "查看请求记录", Modifier.weight(1f)) {
+                    ctx.startActivity(Intent(ctx, LogActivity::class.java))
+                }
+            }
 
-                Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
+
+            Column(
+                Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("局域网", fontSize = 12.sp, color = Muted, modifier = Modifier.width(48.dp))
-                    Text(
-                        text = lanIp?.let { "http://$it:$port" } ?: "未连接 Wi-Fi",
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton("复制", onClick = {
+                    Text("服务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
+                    Spacer(Modifier.weight(1f))
+                    Text("点击数值可复制", fontSize = 11.sp, color = p.sub)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    StatCell(p, "端口", port.toString(), Modifier.weight(1f)) {
+                        copy(ctx, port.toString())
+                    }
+                    StatCell(p, "本机", "127.0.0.1", Modifier.weight(1f)) {
+                        copy(ctx, "http://127.0.0.1:$port")
+                    }
+                    StatCell(p, "局域网", lanIp ?: "无", Modifier.weight(1f)) {
                         val ip = lanIp
                         if (ip != null) copy(ctx, "http://$ip:$port")
-                    })
-                }
-
-                Spacer(Modifier.height(14.dp))
-                Button(
-                    onClick = {
-                        if (running) {
-                            Settings.setServerEnabled(ctx, false)
-                            ctx.stopService(Intent(ctx, HttpService::class.java))
-                        } else {
-                            Settings.setServerEnabled(ctx, true)
-                            val i = Intent(ctx, HttpService::class.java)
-                            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i)
-                            else ctx.startService(i)
-                        }
-                        autoStart = Settings.isServerEnabled(ctx)
-                        running = HttpService.isServiceRunning
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (running) "停止服务器" else "启动服务器", fontWeight = FontWeight.Medium)
+                    }
                 }
             }
 
-            /* ========== 媒体库 ========== */
-            SectionTitle("媒体库")
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("视频目录", fontSize = 12.sp, color = Muted)
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = treeLabel.ifEmpty { "全机视频" },
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    CountBadge(if (count < 0) "…" else "$count")
-                }
+            Spacer(Modifier.height(12.dp))
 
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                InfoCard(p, "视频目录", treeLabel.ifEmpty { "全机视频" }, Modifier.weight(1f)) {
+                    picker.launch(null)
+                }
+                InfoCard(p, "弹幕源", if (danmuDraft.isBlank()) "内置默认" else "自定义", Modifier.weight(1f)) {
+                    editingDanmu = !editingDanmu
+                }
+            }
+
+            if (editingDanmu) {
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { picker.launch(null) }, modifier = Modifier.weight(1f)) {
-                        Text("选择文件夹")
-                    }
-                    Button(onClick = { rescan() }, modifier = Modifier.weight(1f)) {
-                        Text("刷新")
+                Column(
+                    Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
+                ) {
+                    Text("弹幕 API 地址", fontSize = 13.sp, color = p.sub)
+                    Spacer(Modifier.height(8.dp))
+                    BasicField(p, danmuDraft) { danmuDraft = it }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PillButton("保存", Blue, Modifier.weight(1f)) {
+                            Settings.setDanmuApi(ctx, danmuDraft)
+                            editingDanmu = false
+                            toast(ctx, "已保存")
+                        }
+                        PillButton("恢复默认", p.cardAlt, Modifier.weight(1f)) {
+                            danmuDraft = ""
+                            Settings.setDanmuApi(ctx, "")
+                            toast(ctx, "已恢复内置弹幕源")
+                        }
                     }
                 }
             }
 
-            /* ========== 设置 ========== */
-            SectionTitle("设置")
-            Card(modifier = Modifier.fillMaxWidth()) {
-                // 开机自启
+            Spacer(Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ProgressCard(p, "媒体库数量", count.coerceAtLeast(0), 200, Modifier.weight(1f))
+                ProgressCard(
+                    p, "内存占用", memMb.toInt(), 512, Modifier.weight(1f),
+                    suffix = "MB", extraLabel = "线程", extraValue = threads.toString()
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Column(Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp))) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            autoStart = !autoStart
-                            Settings.setServerEnabled(ctx, autoStart)
-                        }
-                        .padding(vertical = 6.dp),
+                    Modifier.fillMaxWidth().clickable {
+                        autoStart = !autoStart
+                        Settings.setServerEnabled(ctx, autoStart)
+                    }.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("开机自动启动", fontSize = 15.sp)
-                        Text("手动开启过服务器后生效", fontSize = 12.sp, color = Muted)
+                        Text("开机自动启动", fontSize = 15.sp, color = p.text)
+                        Text("手动开启过服务器后生效", fontSize = 11.sp, color = p.sub)
                     }
-                    MiuixSwitch(autoStart) {
-                        autoStart = it
-                        Settings.setServerEnabled(ctx, it)
-                    }
+                    Text(
+                        if (autoStart) "已开启" else "已关闭",
+                        fontSize = 13.sp,
+                        color = if (autoStart) Green else p.sub
+                    )
                 }
-
-                HorizontalDivider()
-
-                // 端口
-                SettingRow(
-                    title = "服务端口",
-                    summary = port.toString(),
-                    onClick = {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(p.divider))
+                Row(
+                    Modifier.fillMaxWidth().clickable {
                         portDraft = port.toString()
                         editingPort = !editingPort
-                        editingDanmu = false
-                    }
-                )
+                    }.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("服务端口", fontSize = 15.sp, color = p.text, modifier = Modifier.weight(1f))
+                    Text(port.toString(), fontSize = 13.sp, color = p.sub)
+                    Spacer(Modifier.width(6.dp))
+                    Text("›", fontSize = 16.sp, color = p.sub)
+                }
                 if (editingPort) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextField(
-                            value = portDraft,
-                            onValueChange = { portDraft = it.filter { c -> c.isDigit() }.take(5) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Button(onClick = {
+                    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                        BasicField(p, portDraft) { portDraft = it.filter { c -> c.isDigit() }.take(5) }
+                        Spacer(Modifier.height(10.dp))
+                        PillButton("保存端口", Blue, Modifier.fillMaxWidth()) {
                             val v = portDraft.toIntOrNull()
                             if (v == null || v < 1024 || v > 65535) {
                                 toast(ctx, "请输入 1024-65535")
@@ -304,140 +358,285 @@ private fun HomeScreen() {
                                 Settings.setPort(ctx, v)
                                 port = v
                                 editingPort = false
-                                toast(ctx, if (running) "已保存，重启服务器后生效" else "端口已保存")
+                                toast(ctx, if (running) "已保存，重启服务器后生效" else "已保存")
                             }
-                        }) { Text("保存") }
-                    }
-                }
-
-                HorizontalDivider()
-
-                // 弹幕源
-                SettingRow(
-                    title = "弹幕源",
-                    summary = if (danmuDraft.isBlank()) "内置默认" else "自定义",
-                    onClick = {
-                        danmuDraft = Settings.getDanmuApi(ctx)
-                        editingDanmu = !editingDanmu
-                        editingPort = false
-                    }
-                )
-                if (editingDanmu) {
-                    Spacer(Modifier.height(8.dp))
-                    TextField(
-                        value = danmuDraft,
-                        onValueChange = { danmuDraft = it },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = {
-                            Settings.setDanmuApi(ctx, danmuDraft)
-                            editingDanmu = false
-                            toast(ctx, "弹幕源已保存")
-                        }, modifier = Modifier.weight(1f)) { Text("保存") }
-                        Button(onClick = {
-                            danmuDraft = ""
-                            Settings.setDanmuApi(ctx, "")
-                            toast(ctx, "已恢复内置弹幕源")
-                        }, modifier = Modifier.weight(1f)) { Text("恢复默认") }
+                        }
                     }
                 }
             }
 
-            /* ========== 调试 ========== */
-            SectionTitle("调试")
-            Card(modifier = Modifier.fillMaxWidth()) {
-                SettingRow(
-                    title = "请求日志",
-                    summary = "排查客户端兼容",
-                    showChevron = true,
-                    onClick = { ctx.startActivity(Intent(ctx, LogActivity::class.java)) }
-                )
-            }
+            Spacer(Modifier.height(132.dp))
+        }
 
-            Spacer(Modifier.height(18.dp))
-            Text(
-                text = "服务器仅在本机运行，不经过任何第三方。支持直连播放、续播记忆与自动弹幕。",
-                fontSize = 11.sp,
-                color = Muted,
-                lineHeight = 16.sp
-            )
-            Spacer(Modifier.height(28.dp))
+        Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 14.dp)) {
+            Row(
+                Modifier
+                    .background(p.cardAlt, RoundedCornerShape(50))
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val items = listOf("首页", "媒体库", "日志", "设置")
+                items.forEachIndexed { i, label ->
+                    Box(
+                        Modifier
+                            .background(
+                                if (tab == i) Blue.copy(alpha = 0.16f) else Color.Transparent,
+                                RoundedCornerShape(50)
+                            )
+                            .clickable {
+                                tab = i
+                                when (i) {
+                                    1 -> scope.launch { scroll.animateScrollTo((scroll.maxValue * 0.35f).toInt()) }
+                                    2 -> ctx.startActivity(Intent(ctx, LogActivity::class.java))
+                                    3 -> scope.launch { scroll.animateScrollTo(scroll.maxValue) }
+                                    else -> scope.launch { scroll.animateScrollTo(0) }
+                                }
+                            }
+                            .padding(horizontal = 18.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 13.sp,
+                            fontWeight = if (tab == i) FontWeight.Medium else FontWeight.Normal,
+                            color = if (tab == i) Blue else p.sub
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-/* ---------- 组件 ---------- */
+/* ---------------- 轻量 Text ---------------- */
 
 @Composable
-private fun StatusPill(running: Boolean) {
-    val color = if (running) Success else Muted
-    Row(
-        modifier = Modifier
-            .background(color.copy(alpha = 0.14f), RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
+private fun Text(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    BasicText(
+        text = text,
+        modifier = modifier,
+        style = TextStyle(
+            color = color,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            fontFamily = fontFamily,
+            letterSpacing = letterSpacing
+        ),
+        maxLines = maxLines,
+        overflow = overflow
+    )
+}
+
+/* ---------------- 组件 ---------------- */
+
+@Composable
+private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int) {
+    val tint = if (running) Green else p.sub
+    val brush = if (running) {
+        Brush.linearGradient(listOf(Color(0xFF10402A), Color(0xFF123024), Color(0xFF0A1A12)))
+    } else {
+        Brush.linearGradient(listOf(p.card, p.cardAlt))
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(brush, RoundedCornerShape(22.dp))
+            .padding(20.dp)
     ) {
-        Spacer(Modifier.size(7.dp).background(color, CircleShape))
-        Spacer(Modifier.width(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.size(8.dp).background(tint, RoundedCornerShape(50)))
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        if (running) "运行中" else "已停止",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = tint
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (running) "已运行 $uptimeMin 分钟" else "服务未启动",
+                    fontSize = 13.sp,
+                    color = if (running) Color(0xFFA9BFB2) else p.sub
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Emby · 直连播放",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = p.text
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "http://127.0.0.1:$port",
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (running) Color(0xFF8FA79A) else p.sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Canvas(Modifier.size(64.dp)) {
+                val stroke = 3.dp.toPx()
+                drawCircle(
+                    color = tint.copy(alpha = 0.9f),
+                    radius = size.minDimension / 2 - stroke / 2,
+                    style = Stroke(width = stroke)
+                )
+                val w = size.width
+                val h = size.height
+                if (running) {
+                    drawLine(tint, Offset(w * 0.32f, h * 0.52f), Offset(w * 0.45f, h * 0.66f), stroke, StrokeCap.Round)
+                    drawLine(tint, Offset(w * 0.45f, h * 0.66f), Offset(w * 0.70f, h * 0.36f), stroke, StrokeCap.Round)
+                } else {
+                    drawLine(tint, Offset(w * 0.38f, h * 0.38f), Offset(w * 0.62f, h * 0.62f), stroke, StrokeCap.Round)
+                    drawLine(tint, Offset(w * 0.62f, h * 0.38f), Offset(w * 0.38f, h * 0.62f), stroke, StrokeCap.Round)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionCell(text: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier.fillMaxSize().clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = color)
+    }
+}
+
+@Composable
+private fun VDivider(p: Palette) {
+    Box(Modifier.width(1.dp).height(22.dp).background(p.divider))
+}
+
+@Composable
+private fun InfoCard(
+    p: Palette,
+    title: String,
+    subtitle: String,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier
+            .background(p.card, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp)
+    ) {
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
+        Spacer(Modifier.height(4.dp))
         Text(
-            text = if (running) "运行中" else "已停止",
+            subtitle,
             fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = color
+            color = p.sub,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
 
 @Composable
-private fun CountBadge(text: String) {
-    Box(
-        modifier = Modifier
-            .background(Accent.copy(alpha = 0.14f), RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) {
-        Text(text, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Accent)
-    }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Spacer(Modifier.height(10.dp))
-    SmallTitle(text = text)
-}
-
-@Composable
-private fun SettingRow(
-    title: String,
-    summary: String? = null,
-    showChevron: Boolean = false,
+private fun StatCell(
+    p: Palette,
+    label: String,
+    value: String,
+    modifier: Modifier,
     onClick: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, fontSize = 15.sp, modifier = Modifier.weight(1f))
-        if (summary != null) {
-            Text(summary, fontSize = 13.sp, color = Muted)
+    Column(modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, fontSize = 11.sp, color = p.sub)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            value,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = Blue,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun ProgressCard(
+    p: Palette,
+    label: String,
+    value: Int,
+    max: Int,
+    modifier: Modifier,
+    suffix: String = "部",
+    extraLabel: String? = null,
+    extraValue: String? = null
+) {
+    Column(modifier.background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 13.sp, color = p.sub, modifier = Modifier.weight(1f))
+            if (extraLabel != null) {
+                Text("$extraLabel $extraValue", fontSize = 11.sp, color = p.sub)
+            }
         }
-        if (showChevron) {
-            Spacer(Modifier.width(6.dp))
-            Text("›", fontSize = 18.sp, color = Muted)
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("$value", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = p.text)
+            Spacer(Modifier.width(3.dp))
+            Text(suffix, fontSize = 11.sp, color = p.sub, modifier = Modifier.padding(bottom = 2.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        val frac = (value.toFloat() / max.toFloat()).coerceIn(0.02f, 1f)
+        Box(Modifier.fillMaxWidth().height(4.dp).background(p.divider, RoundedCornerShape(50))) {
+            Box(Modifier.fillMaxWidth(frac).height(4.dp).background(Blue, RoundedCornerShape(50)))
         }
     }
 }
 
 @Composable
-private fun MiuixSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
-    top.yukonga.miuix.kmp.basic.Switch(checked = checked, onCheckedChange = onChange)
+private fun BasicField(p: Palette, value: String, onChange: (String) -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(p.cardAlt, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            textStyle = androidx.compose.ui.text.TextStyle(color = p.text, fontSize = 14.sp),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(Blue),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+    }
 }
 
-/* ---------- 工具 ---------- */
+@Composable
+private fun PillButton(text: String, bg: Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .background(bg, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 11.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+    }
+}
+
+/* ---------------- 工具 ---------------- */
 
 private fun copy(ctx: Context, text: String) {
     if (text.isEmpty()) return

@@ -13,6 +13,8 @@ import android.os.IBinder;
 public class HttpService extends Service {
 
     public static volatile boolean isServiceRunning = false;
+    /** 服务启动时间戳，供界面显示运行时长。 */
+    public static volatile long startedAt = 0L;
 
     private static final String CHANNEL_ID = "embylite";
     private static final int NOTIFICATION_ID = 1;
@@ -49,6 +51,7 @@ public class HttpService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         int port = Settings.getPort(this);
+        if (startedAt == 0L) startedAt = System.currentTimeMillis();
         try {
             EmbyHttpServer.start(this, port);
             if (!EmbyHttpServer.isRunning()) {
