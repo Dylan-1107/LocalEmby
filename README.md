@@ -8,7 +8,9 @@
 
 - **HyperOS 风格界面**：基于 [Miuix](https://github.com/compose-miuix-ui/miuix)（Compose Multiplatform UI 库）重写，卡片式布局、系统级观感
 
-- **本地目录即媒体库**：用系统文件夹选择器（SAF）授权目录，或用 MediaStore 扫全机视频
+- **本地目录即媒体库**，两种授权方式：
+  - **选择文件夹（SAF）**：逐个目录授权，可持久化、不需要危险权限；Android 11+ 系统不允许选存储根目录，所以只能选具体文件夹
+  - **所有文件访问权限**：在系统设置里一次性授予 `MANAGE_EXTERNAL_STORAGE`，之后直接扫全盘，无需选目录（本项目不上架 Play，不受其政策限制）
 - **Emby API 模拟**：实现登录、媒体库、条目列表/详情、PlaybackInfo、图片、视频流（HTTP Range 拖动）、播放进度上报等接口
 - **续播与进度记忆**：通过 Emby 的 `PlaybackPositionTicks` 协议上报，客户端原生「继续观看」生效；多个客户端共享同一份进度
 - **自动弹幕**：客户端请求 `/api/danmu/{itemId}` 时，按文件名匹配弹弹play 兼容弹幕源并返回弹幕数据

@@ -124,6 +124,8 @@ private fun HomeScreen(p: Palette) {
     var editingDanmu by remember { mutableStateOf(false) }
     var danmuDraft by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
     var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
+    var allFiles by remember { mutableStateOf(VideoLibrary.hasAllFilesAccess()) }
+    var prevAllFiles by remember { mutableStateOf(allFiles) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -135,6 +137,11 @@ private fun HomeScreen(p: Palette) {
             memMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
             threads = Thread.activeCount()
             lanIp = lanIpAddress()
+            allFiles = VideoLibrary.hasAllFilesAccess()
+            if (allFiles && !prevAllFiles) {
+                prevAllFiles = true
+                VideoLibrary.invalidate()
+            }
             delay(2000)
         }
     }
@@ -149,7 +156,7 @@ private fun HomeScreen(p: Palette) {
         VideoLibrary.invalidate()
         scope.launch {
             count = withContext(Dispatchers.IO) {
-                runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
+                runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }
                     .getOrDefault(-1)
             }
             toast(ctx, if (count >= 0) "已刷新，共 $count 部" else "扫描失败，请查看日志")
@@ -181,7 +188,7 @@ private fun HomeScreen(p: Palette) {
             VideoLibrary.invalidate()
             scope.launch {
                 count = withContext(Dispatchers.IO) {
-                    runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
+                    runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }
                         .getOrDefault(-1)
                 }
                 toast(ctx, "已选择目录，共 $count 部")
@@ -271,11 +278,80 @@ private fun HomeScreen(p: Palette) {
             Spacer(Modifier.height(12.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                InfoCard(p, "视频目录", treeLabel.ifEmpty { "全机视频" }, Modifier.weight(1f)) {
-                    picker.launch(null)
-                }
+                InfoCard(
+                    p, "视频目录",
+                    when {
+                        treeLabel.isNotEmpty() -> treeLabel
+                        allFiles -> "全盘（全部文件）"
+                        else -> "未授权"
+                    },
+                    Modifier.weight(1f)
+                ) { picker.launch(null) }
                 InfoCard(p, "弹幕源", if (danmuDraft.isBlank()) "内置默认" else "自定义", Modifier.weight(1f)) {
                     editingDanmu = !editingDanmu
+                }
+            }
+
+            if (treeLabel.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(p.card, RoundedCornerShape(18.dp))
+                        .clickable {
+                            Settings.setTreeUri(ctx, "")
+                            treeLabel = ""
+                            VideoLibrary.invalidate()
+                            rescan()
+                        }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("改用全盘扫描", fontSize = 15.sp, color = p.text)
+                        Text(
+                            if (allFiles) "清除当前文件夹选择，扫描整台手机"
+                            else "需要先授予「所有文件访问权限」",
+                            fontSize = 11.sp,
+                            color = p.sub
+                        )
+                    }
+                    Text("›", fontSize = 16.sp, color = p.sub)
+                }
+            }
+
+            if (!allFiles) {
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("免选文件夹", fontSize = 15.sp, color = p.text)
+                            Text(
+                                "授予「所有文件访问权限」后直接扫全盘，无需逐个选目录",
+                                fontSize = 11.sp,
+                                color = p.sub
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        PillButton("去授权", Blue, Modifier.width(92.dp)) {
+                            try {
+                                ctx.startActivity(
+                                    Intent(
+                                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                        Uri.parse("package:" + ctx.packageName)
+                                    )
+                                )
+                            } catch (e: Throwable) {
+                                try {
+                                    ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                                } catch (e2: Throwable) {
+                                    toast(ctx, "无法打开权限设置")
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

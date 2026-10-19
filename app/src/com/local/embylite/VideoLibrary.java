@@ -45,8 +45,13 @@ public class VideoLibrary {
         return c;
     }
 
-    /** 扫描入口：有 SAF 目录授权时优先走 SAF，否则手动路径/MediaStore。 */
+    /** 扫描入口：全盘权限 > SAF 目录授权 > 手动路径/MediaStore。 */
     public static List<Item> scanAuto(Context ctx, String folderPath) {
+        if (hasAllFilesAccess() && (Settings.getTreeUri(ctx) == null || Settings.getTreeUri(ctx).isEmpty())) {
+            List<Item> all = scanWholeStorage();
+            if (!all.isEmpty()) return all;
+            EmbyLog.info("全盘扫描为空，回退 MediaStore");
+        }
         String tree = Settings.getTreeUri(ctx);
         if (tree != null && !tree.isEmpty()) {
             List<Item> out = scanSaf(ctx, tree);
@@ -54,6 +59,77 @@ public class VideoLibrary {
             EmbyLog.info("SAF 扫描为空，回退手动路径/MediaStore");
         }
         return scan(ctx, folderPath);
+    }
+
+    /** 是否已获得「所有文件访问权限」（Android 11+）。 */
+    public static boolean hasAllFilesAccess() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                return android.os.Environment.isExternalStorageManager();
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 直接遍历全盘（需要 MANAGE_EXTERNAL_STORAGE），覆盖 MediaStore 未索引的目录。 */
+    public static List<Item> scanWholeStorage() {
+        List<Item> out = new ArrayList<Item>();
+        List<File> roots = new ArrayList<File>();
+        try {
+            File primary = android.os.Environment.getExternalStorageDirectory();
+            if (primary != null && primary.isDirectory()) roots.add(primary);
+            File storage = new File("/storage");
+            File[] vols = storage.listFiles();
+            if (vols != null) {
+                for (File v : vols) {
+                    if (!v.isDirectory()) continue;
+                    String n = v.getName();
+                    if (n.equals("emulated") || n.equals("self") || n.equals("sdcard0")) continue;
+                    if (primary != null && v.getAbsolutePath().equals(primary.getAbsolutePath())) continue;
+                    roots.add(v);
+                }
+            }
+        } catch (Throwable t) {
+            EmbyLog.info("枚举存储卷失败: " + t);
+        }
+        for (File r : roots) {
+            walkDeep(r, out, 0);
+        }
+        Collections.sort(out, new Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return String.CASE_INSENSITIVE_ORDER.compare(nz(a.name), nz(b.name));
+            }
+        });
+        EmbyLog.info("全盘扫描完成，共 " + out.size() + " 部视频");
+        return out;
+    }
+
+    private static void walkDeep(File dir, List<Item> out, int depth) {
+        if (depth > 8) return;
+        File[] files;
+        try {
+            files = dir.listFiles();
+        } catch (Throwable t) {
+            return;
+        }
+        if (files == null) return;
+        for (File f : files) {
+            String n = f.getName();
+            if (n.startsWith(".")) continue;
+            if (f.isDirectory()) {
+                if (n.equalsIgnoreCase("Android") || n.equalsIgnoreCase("obb")) continue;
+                walkDeep(f, out, depth + 1);
+            } else if (isVideo(n)) {
+                try {
+                    if (f.length() < 1024) continue; // 跳过空文件/占位文件
+                } catch (Throwable ignored) {
+                }
+                out.add(new Item(f.getAbsolutePath(), stripExt(n), ext(n), f.length(), 0));
+            }
+        }
     }
 
     public static void invalidate() {

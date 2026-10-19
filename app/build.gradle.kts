@@ -13,8 +13,8 @@ android {
         applicationId = "com.local.embylite"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.3.0"
+        versionCode = 6
+        versionName = "2.4.0"
     }
 
     // 沿用原有目录结构，保持 build.ps1（无 Gradle 手动打包）可用
