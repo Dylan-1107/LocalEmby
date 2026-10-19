@@ -32,6 +32,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".LogActivity"
+            android:exported="false"
+            android:label="请求日志" />
+
         <service
             android:name=".HttpService"
             android:exported="false"
