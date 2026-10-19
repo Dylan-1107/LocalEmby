@@ -14,8 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,15 +56,18 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 
-/** 次要文字颜色（避免依赖具体主题字段）。 */
-private val Secondary = Color(0xFF8A8A93)
+/* ---------- 设计常量 ---------- */
+private val Accent = Color(0xFF3482FF)
+private val Success = Color(0xFF34C759)
+private val Muted = Color(0xFF8E8E93)
+private val Gap = 12.dp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,36 +76,51 @@ class MainActivity : ComponentActivity() {
             MiuixTheme(
                 colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
             ) {
-                MainScreen()
+                HomeScreen()
             }
         }
     }
 }
 
 @Composable
-private fun MainScreen() {
+private fun HomeScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var running by remember { mutableStateOf(HttpService.isServiceRunning) }
-    var folderPath by remember { mutableStateOf(Settings.getFolderPath(ctx)) }
+    var port by remember { mutableStateOf(Settings.getPort(ctx)) }
     var treeLabel by remember { mutableStateOf(treeDisplayPath(ctx)) }
-    var portText by remember { mutableStateOf(Settings.getPort(ctx).toString()) }
-    var danmuApi by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
-    var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
     var count by remember { mutableStateOf(-1) }
     var lanIp by remember { mutableStateOf(lanIpAddress()) }
+    var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
+
+    var editingPort by remember { mutableStateOf(false) }
+    var portDraft by remember { mutableStateOf(port.toString()) }
+    var editingDanmu by remember { mutableStateOf(false) }
+    var danmuDraft by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
 
     LaunchedEffect(Unit) {
         while (true) {
             running = HttpService.isServiceRunning
+            port = Settings.getPort(ctx)
             delay(1000)
         }
     }
 
-    LaunchedEffect(folderPath, treeLabel) {
+    LaunchedEffect(treeLabel) {
         count = withContext(Dispatchers.IO) {
             runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }.getOrDefault(-1)
+        }
+    }
+
+    fun rescan() {
+        VideoLibrary.invalidate()
+        scope.launch {
+            count = withContext(Dispatchers.IO) {
+                runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
+                    .getOrDefault(-1)
+            }
+            toast(ctx, if (count >= 0) "已刷新，共 $count 部视频" else "扫描失败，请查看日志")
         }
     }
 
@@ -117,227 +139,305 @@ private fun MainScreen() {
                     runCatching { VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size }
                         .getOrDefault(-1)
                 }
-                toast(ctx, "已选择：$treeLabel，共 $count 部视频")
+                toast(ctx, "已选择目录，共 $count 部视频")
             }
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
         SmallTopAppBar(title = "本地影院")
 
         Column(
-            modifier = Modifier
+            Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
-            // ---------- 服务器状态 ----------
+            /* ========== 状态主卡 ========== */
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(
-                        Modifier
-                            .size(10.dp)
-                            .background(
-                                if (running) Color(0xFF34C759) else Color(0xFF9A9AA5),
-                                CircleShape
-                            )
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (running) "运行中" else "已停止",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    StatusPill(running)
                     Spacer(Modifier.weight(1f))
-                    Text(text = "端口 ${Settings.getPort(ctx)}", fontSize = 13.sp, color = Secondary)
+                    Text(
+                        text = "端口 $port",
+                        fontSize = 12.sp,
+                        color = Muted
+                    )
                 }
 
-                Spacer(Modifier.height(12.dp))
-                AddressRow("本机", "http://127.0.0.1:${Settings.getPort(ctx)}")
-                Spacer(Modifier.height(8.dp))
-                AddressRow(
-                    "局域网",
-                    if (lanIp == null) "未检测到" else "http://$lanIp:${Settings.getPort(ctx)}"
+                Spacer(Modifier.height(16.dp))
+
+                // 主视觉：本机地址
+                Text(
+                    text = "http://127.0.0.1:$port",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 0.2.sp,
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (running) "在 Hills / YAmby 中添加此地址即可连接" else "启动服务器后可连接",
+                    fontSize = 12.sp,
+                    color = Muted
                 )
 
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("局域网", fontSize = 12.sp, color = Muted, modifier = Modifier.width(48.dp))
+                    Text(
+                        text = lanIp?.let { "http://$it:$port" } ?: "未连接 Wi-Fi",
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton("复制", onClick = {
+                        val ip = lanIp
+                        if (ip != null) copy(ctx, "http://$ip:$port")
+                    })
+                }
+
                 Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = {
-                            if (running) {
-                                Settings.setServerEnabled(ctx, false)
-                                ctx.stopService(Intent(ctx, HttpService::class.java))
-                                toast(ctx, "服务器已停止")
-                            } else {
-                                Settings.setServerEnabled(ctx, true)
-                                val i = Intent(ctx, HttpService::class.java)
-                                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i)
-                                else ctx.startService(i)
-                                toast(ctx, "服务器启动中…")
-                            }
-                            autoStart = Settings.isServerEnabled(ctx)
-                            running = HttpService.isServiceRunning
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(if (running) "停止服务器" else "启动服务器")
-                    }
-                    Button(
-                        onClick = {
-                            lanIp = lanIpAddress()
-                            toast(ctx, "地址已刷新")
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("刷新地址")
-                    }
+                Button(
+                    onClick = {
+                        if (running) {
+                            Settings.setServerEnabled(ctx, false)
+                            ctx.stopService(Intent(ctx, HttpService::class.java))
+                        } else {
+                            Settings.setServerEnabled(ctx, true)
+                            val i = Intent(ctx, HttpService::class.java)
+                            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i)
+                            else ctx.startService(i)
+                        }
+                        autoStart = Settings.isServerEnabled(ctx)
+                        running = HttpService.isServiceRunning
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (running) "停止服务器" else "启动服务器", fontWeight = FontWeight.Medium)
                 }
             }
 
-            // ---------- 媒体库 ----------
-            SmallTitle(text = "媒体库")
+            /* ========== 媒体库 ========== */
+            SectionTitle("媒体库")
             Card(modifier = Modifier.fillMaxWidth()) {
-                Text(text = "视频目录", fontSize = 13.sp, color = Secondary)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = treeLabel.ifEmpty { "未选择（扫描全机视频）" },
-                    fontSize = 15.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("视频目录", fontSize = 12.sp, color = Muted)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = treeLabel.ifEmpty { "全机视频" },
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    CountBadge(if (count < 0) "…" else "$count")
+                }
+
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { picker.launch(null) }, modifier = Modifier.weight(1f)) {
                         Text("选择文件夹")
                     }
-                    Button(
-                        onClick = {
-                            VideoLibrary.invalidate()
-                            scope.launch {
-                                count = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        VideoLibrary.scanAuto(ctx, Settings.getFolderPath(ctx)).size
-                                    }.getOrDefault(-1)
-                                }
-                                toast(
-                                    ctx,
-                                    if (count >= 0) "共 $count 部视频" else "扫描失败，请查看日志"
-                                )
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("刷新媒体库")
+                    Button(onClick = { rescan() }, modifier = Modifier.weight(1f)) {
+                        Text("刷新")
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = if (count < 0) "统计中…" else "共 $count 部视频",
-                    fontSize = 13.sp,
-                    color = Secondary
-                )
             }
 
-            // ---------- 设置 ----------
-            SmallTitle(text = "设置")
+            /* ========== 设置 ========== */
+            SectionTitle("设置")
             Card(modifier = Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // 开机自启
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            autoStart = !autoStart
+                            Settings.setServerEnabled(ctx, autoStart)
+                        }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Column(Modifier.weight(1f)) {
-                        Text("开机自动启动", fontSize = 16.sp)
-                        Text("仅在你手动开启过服务器后生效", fontSize = 12.sp, color = Secondary)
+                        Text("开机自动启动", fontSize = 15.sp)
+                        Text("手动开启过服务器后生效", fontSize = 12.sp, color = Muted)
                     }
-                    Switch(checked = autoStart, onCheckedChange = {
+                    MiuixSwitch(autoStart) {
                         autoStart = it
                         Settings.setServerEnabled(ctx, it)
-                    })
+                    }
                 }
 
                 HorizontalDivider()
 
-                Text(text = "服务端口", fontSize = 13.sp, color = Secondary)
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextField(
-                        value = portText,
-                        onValueChange = { portText = it.filter { c -> c.isDigit() }.take(5) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Button(onClick = {
-                        val v = portText.toIntOrNull()
-                        if (v == null || v < 1024 || v > 65535) {
-                            toast(ctx, "请输入 1024-65535 的端口")
-                        } else {
-                            Settings.setPort(ctx, v)
-                            toast(ctx, if (running) "已保存，重启服务器后生效" else "端口已保存")
-                        }
-                    }) { Text("保存") }
+                // 端口
+                SettingRow(
+                    title = "服务端口",
+                    summary = port.toString(),
+                    onClick = {
+                        portDraft = port.toString()
+                        editingPort = !editingPort
+                        editingDanmu = false
+                    }
+                )
+                if (editingPort) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextField(
+                            value = portDraft,
+                            onValueChange = { portDraft = it.filter { c -> c.isDigit() }.take(5) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            val v = portDraft.toIntOrNull()
+                            if (v == null || v < 1024 || v > 65535) {
+                                toast(ctx, "请输入 1024-65535")
+                            } else {
+                                Settings.setPort(ctx, v)
+                                port = v
+                                editingPort = false
+                                toast(ctx, if (running) "已保存，重启服务器后生效" else "端口已保存")
+                            }
+                        }) { Text("保存") }
+                    }
                 }
 
-                Spacer(Modifier.height(14.dp))
-                Text(text = "弹幕源（弹弹play 兼容，留空用内置）", fontSize = 13.sp, color = Secondary)
-                Spacer(Modifier.height(6.dp))
-                TextField(
-                    value = danmuApi,
-                    onValueChange = { danmuApi = it },
-                    modifier = Modifier.fillMaxWidth()
+                HorizontalDivider()
+
+                // 弹幕源
+                SettingRow(
+                    title = "弹幕源",
+                    summary = if (danmuDraft.isBlank()) "内置默认" else "自定义",
+                    onClick = {
+                        danmuDraft = Settings.getDanmuApi(ctx)
+                        editingDanmu = !editingDanmu
+                        editingPort = false
+                    }
                 )
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    Settings.setDanmuApi(ctx, danmuApi)
-                    toast(ctx, "弹幕源已保存")
-                }) { Text("保存弹幕源") }
+                if (editingDanmu) {
+                    Spacer(Modifier.height(8.dp))
+                    TextField(
+                        value = danmuDraft,
+                        onValueChange = { danmuDraft = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = {
+                            Settings.setDanmuApi(ctx, danmuDraft)
+                            editingDanmu = false
+                            toast(ctx, "弹幕源已保存")
+                        }, modifier = Modifier.weight(1f)) { Text("保存") }
+                        Button(onClick = {
+                            danmuDraft = ""
+                            Settings.setDanmuApi(ctx, "")
+                            toast(ctx, "已恢复内置弹幕源")
+                        }, modifier = Modifier.weight(1f)) { Text("恢复默认") }
+                    }
+                }
             }
 
-            // ---------- 调试 ----------
-            SmallTitle(text = "调试")
+            /* ========== 调试 ========== */
+            SectionTitle("调试")
             Card(modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = { ctx.startActivity(Intent(ctx, LogActivity::class.java)) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("查看请求日志") }
+                SettingRow(
+                    title = "请求日志",
+                    summary = "排查客户端兼容",
+                    showChevron = true,
+                    onClick = { ctx.startActivity(Intent(ctx, LogActivity::class.java)) }
+                )
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(18.dp))
             Text(
-                text = "在 Emby 客户端添加服务器：地址 http://127.0.0.1:${Settings.getPort(ctx)}，" +
-                        "用户名密码任意填写。",
-                fontSize = 12.sp,
-                color = Secondary
+                text = "服务器仅在本机运行，不经过任何第三方。支持直连播放、续播记忆与自动弹幕。",
+                fontSize = 11.sp,
+                color = Muted,
+                lineHeight = 16.sp
             )
             Spacer(Modifier.height(28.dp))
         }
     }
 }
 
+/* ---------- 组件 ---------- */
+
 @Composable
-private fun AddressRow(label: String, value: String) {
-    val ctx = LocalContext.current
+private fun StatusPill(running: Boolean) {
+    val color = if (running) Success else Muted
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .background(color.copy(alpha = 0.14f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Spacer(Modifier.size(7.dp).background(color, CircleShape))
+        Spacer(Modifier.width(6.dp))
         Text(
-            text = label,
-            fontSize = 13.sp,
-            color = Secondary,
-            modifier = Modifier.width(56.dp)
-        )
-        Text(
-            text = value,
-            fontSize = 14.sp,
+            text = if (running) "运行中" else "已停止",
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
+            color = color
         )
-        Button(onClick = { copy(ctx, value) }) {
-            Text("复制", fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun CountBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .background(Accent.copy(alpha = 0.14f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Text(text, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Accent)
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Spacer(Modifier.height(10.dp))
+    SmallTitle(text = text)
+}
+
+@Composable
+private fun SettingRow(
+    title: String,
+    summary: String? = null,
+    showChevron: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        if (summary != null) {
+            Text(summary, fontSize = 13.sp, color = Muted)
+        }
+        if (showChevron) {
+            Spacer(Modifier.width(6.dp))
+            Text("›", fontSize = 18.sp, color = Muted)
         }
     }
 }
+
+@Composable
+private fun MiuixSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    top.yukonga.miuix.kmp.basic.Switch(checked = checked, onCheckedChange = onChange)
+}
+
+/* ---------- 工具 ---------- */
 
 private fun copy(ctx: Context, text: String) {
     if (text.isEmpty()) return
