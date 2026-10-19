@@ -31,6 +31,8 @@ ui*.xml
 *.jpg
 *.jpeg
 *.webp
+# 允许仓库内的文档截图
+!docs/*.png
 
 # 个人数据
 rename_backup_*.txt

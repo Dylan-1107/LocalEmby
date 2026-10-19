@@ -1,5 +1,25 @@
 # LocalEmby（本地影院）
 
+[![release](https://img.shields.io/github/v/release/Dylan-1107/LocalEmby?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest)
+[![download](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3482FF?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk)
+![minSdk](https://img.shields.io/badge/minSdk-26-30D158?style=flat-square)
+
+## 下载安装
+
+**直接下载（永久链接，始终指向最新版）**
+
+https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
+
+历史版本见 [Releases](https://github.com/Dylan-1107/LocalEmby/releases)。
+
+装好后打开 App → 授权视频目录（选择文件夹或授予全部文件访问）→ 启动服务器 → 在 Emby 客户端添加 `http://127.0.0.1:8096`，用户名密码随意填。
+
+## 界面
+
+| 首页 | 请求日志 |
+| --- | --- |
+| ![首页](docs/screenshot-home.png) | ![日志](docs/screenshot-log.png) |
+
 把手机里的本地视频目录，变成一个**本机可连的 Emby 服务器**。装好之后，任何 Emby 客户端（Hills、YAmby、Infuse 等）添加 `http://127.0.0.1:8096` 就能像浏览真 Emby 一样浏览、播放本地视频，并且**播放进度会记忆、可续播**，还支持**自动匹配弹幕**。
 
 > 本项目是为了解决一个具体问题：想在 Emby 客户端里看手机本地视频，又不想为此专门跑一台 NAS / Jellyfin。它在手机本地模拟 Emby Server 的 HTTP API，零依赖、零转码，全部直连播放。
