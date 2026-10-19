@@ -1,0 +1,43 @@
+# 构建产物
+build/
+*.apk
+*.idsig
+*.apk.verify
+
+# 本地工具链（JDK / Android SDK，体积约 900MB，按 README 自行准备）
+tools/
+
+# 签名文件
+*.keystore
+*.jks
+*.p12
+
+# 调试 / 测试产物
+*.log
+log_*.json
+devlog*.json
+*_check.json
+items_*.json
+series_*.json
+auth_check.json
+danmu_check.json
+yamby_*.json
+hills_*.json
+ui*.xml
+*.hprof
+
+# 截图与图片素材（含个人媒体信息，不入库）
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# 个人数据
+rename_backup_*.txt
+push_metadata.py
+poster_*.jpg
+
+# IDE
+.idea/
+.vscode/
+*.iml

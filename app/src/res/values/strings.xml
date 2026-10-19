@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">本地影院</string>
+    <string name="title_main">本地影院 · Emby 模拟服务器</string>
+    <string name="label_folder">视频路径</string>
+    <string name="hint_folder">/sdcard/Movies（留空则扫描全手机视频）</string>
+    <string name="btn_save_path">保存并刷新</string>
+    <string name="label_port">端口</string>
+    <string name="btn_save_port">保存端口</string>
+    <string name="btn_refresh_lib">刷新媒体库</string>
+    <string name="btn_view_log">查看请求日志</string>
+    <string name="btn_copy_log">复制日志</string>
+    <string name="help_text">帮助：在 Hills 中手动添加服务器，地址填 http://127.0.0.1:8096，用户名密码任意填写即可。</string>
+</resources>

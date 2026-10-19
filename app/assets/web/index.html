@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地影院 · 状态</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: #12141a; color: #d8dce6;
+       font-family: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+h1 { font-size: 20px; margin: 0 0 4px; color: #7fb2ff; }
+h2 { font-size: 15px; margin: 20px 0 8px; color: #9fb3d1; }
+#serverInfo { font-size: 12px; color: #6b7688; margin-bottom: 12px; }
+.item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.item:hover { background: #1d2230; }
+.item .meta { flex: 1; min-width: 0; }
+.item .name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .sub { font-size: 11px; color: #6b7688; margin-top: 2px; }
+.bar { height: 4px; background: #262c3a; border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.bar > div { height: 100%; background: #7fb2ff; }
+.watched { color: #6ee7a0; font-size: 12px; flex-shrink: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid #1d2230; white-space: nowrap; }
+td.path { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.ok { color: #6ee7a0; } .err { color: #ff7b7b; }
+#playerBox { position: fixed; inset: 0; background: rgba(8,10,14,.94); display: none;
+             flex-direction: column; align-items: center; justify-content: center; z-index: 10; }
+#playerBox.open { display: flex; }
+#playerTitle { font-size: 15px; margin-bottom: 10px; color: #d8dce6; max-width: 90vw;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+video { max-width: 96vw; max-height: 76vh; background: #000; border-radius: 6px; }
+.pbtns { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+button { background: #2b5dd7; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px;
+         font-size: 13px; cursor: pointer; }
+button.ghost { background: #262c3a; color: #d8dce6; }
+.empty { color: #6b7688; font-size: 13px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<h1>本地影院 · 状态</h1>
+<div id="serverInfo">检测中…</div>
+
+<section>
+  <h2>视频列表</h2>
+  <div id="list"><div class="empty">加载中…</div></div>
+</section>
+
+<section>
+  <h2>请求日志（最近 800 条）</h2>
+  <table>
+    <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th></tr></thead>
+    <tbody id="logBody"></tbody>
+  </table>
+</section>
+
+<div id="playerBox">
+  <div id="playerTitle"></div>
+  <video id="player" controls playsinline></video>
+  <div class="pbtns">
+    <button id="btnPlay">播放</button>
+    <button id="btnResume" class="ghost" style="display:none">续播</button>
+    <button id="btnClose" class="ghost">关闭</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TICKS = 10000; // Emby ticks: 100ns
+  var $ = function (id) { return document.getElementById(id); };
+  var video = $("player"), currentItem = null, timer = null;
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+  function fmtSize(b) {
+    if (!b || b <= 0) return "-";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(b >= 100 || i === 0 ? 0 : 1) + " " + u[i];
+  }
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var mm = (m < 10 ? "0" : "") + m, ss = (s < 10 ? "0" : "") + s;
+    return h > 0 ? h + ":" + mm + ":" + ss : m + ":" + ss;
+  }
+  function ticksOf(it) {
+    var u = it.UserData || {};
+    return { pos: u.PlaybackPositionTicks || 0, dur: it.RunTimeTicks || 0, played: !!u.Played };
+  }
+  function api(path, opt) {
+    return fetch(path, opt).then(function (r) {
+      return r.text().then(function (t) {
+        try { return { status: r.status, data: JSON.parse(t) }; }
+        catch (e) { return { status: r.status, data: null }; }
+      });
+    });
+  }
+  function post(path, obj) {
+    if (!currentItem || !obj || !obj.ItemId) return Promise.resolve();
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(obj)
+    });
+  }
+
+  // ---------- 服务器信息 ----------
+  function loadServerInfo() {
+    api("/System/Info/Public").then(function (res) {
+      var d = res.data;
+      $("serverInfo").textContent = d
+        ? (d.ServerName + " · v" + d.Version + " · " + d.LocalAddress)
+        : "服务器未响应";
+    });
+  }
+
+  // ---------- 视频列表 ----------
+  function loadLibrary() {
+    api("/Users/user1/Items?Recursive=true&Limit=500").then(function (res) {
+      var items = (res.data && res.data.Items) || [];
+      var listEl = $("list");
+      listEl.innerHTML = "";
+      if (!items.length) {
+        listEl.innerHTML = '<div class="empty">未找到视频，请检查库目录设置</div>';
+        return;
+      }
+      items.forEach(function (it) {
+        var t = ticksOf(it);
+        var pct = t.dur > 0 ? Math.min(100, t.pos / t.dur * 100) : 0;
+        var row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML =
+          '<div class="meta"><div class="name">' + esc(it.Name) + '</div>' +
+          '<div class="sub">' + esc(fmtSize(it.Size)) + " · " +
+          esc(fmtTime((it.RunTimeTicks || 0) / TICKS)) + " · " +
+          esc(it.Container || "") + '</div>' +
+          (pct > 0 && !t.played
+            ? '<div class="bar"><div style="width:' + pct.toFixed(1) + '%"></div></div>'
+            : "") +
+          '</div>' +
+          (t.played ? '<span class="watched">已看完</span>' : "");
+        row.addEventListener("click", function () { openPlayer(it); });
+        listEl.appendChild(row);
+      });
+    });
+  }
+
+  // ---------- 日志 ----------
+  function loadLog() {
+    api("/api/dev/log").then(function (res) {
+      var entries = (res.data && res.data.entries) || [];
+      var body = $("logBody");
+      body.innerHTML = "";
+      // 最新的在前，最多显示 200 条
+      for (var i = entries.length - 1; i >= 0 && i >= entries.length - 200; i--) {
+        var seg = entries[i].split(" ");
+        var time = seg.shift() || "";
+        var method = seg.shift() || "";
+        var rest = seg.join(" ");
+        var idx = rest.lastIndexOf(" -> ");
+        var path = idx >= 0 ? rest.substring(0, idx) : rest;
+        var status = idx >= 0 ? rest.substring(idx + 4) : "";
+        var cls = status.charAt(0) === "2" || status.charAt(0) === "3" ? "ok" : "err";
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + esc(time) + "</td><td>" + esc(method) + "</td>" +
+          '<td class="path">' + esc(path) + '</td>' +
+          '<td class="' + cls + '">' + esc(status) + "</td>";
+        body.appendChild(tr);
+      }
+    });
+  }
+
+  // ---------- 播放器 ----------
+  function openPlayer(it) {
+    currentItem = it;
+    var t = ticksOf(it);
+    var posSec = t.pos / TICKS;
+    $("playerTitle").textContent = it.Name || it.Path || it.Id;
+    video.src = "/Videos/" + it.Id + "/stream";
+    $("playerBox").classList.add("open");
+    var showResume = t.pos > 10 * TICKS && !t.played && t.dur > 0;
+    $("btnResume").style.display = showResume ? "" : "none";
+    if (showResume) $("btnResume").textContent = "从 " + fmtTime(posSec) + " 续播";
+    $("btnPlay").textContent = "播放";
+  }
+  function closePlayer() {
+    postStopped();
+    stopTimer();
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    $("playerBox").classList.remove("open");
+    currentItem = null;
+    loadLibrary();
+    loadLog();
+  }
+  function postProgress() {
+    if (!currentItem || video.paused) return;
+    post("/Sessions/Playing/Progress", {
+      ItemId: currentItem.Id,
+      PositionTicks: Math.round(video.currentTime * TICKS),
+      IsPaused: false
+    });
+  }
+  function postStopped() {
+    if (!currentItem) return;
+    post("/Sessions/Playing/Stopped", {
+      ItemId: currentItem.Id,
+      PositionTicks: Math.round(video.currentTime * TICKS)
+    });
+  }
+  function startTimer() { stopTimer(); timer = setInterval(postProgress, 5000); }
+  function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+  $("btnPlay").addEventListener("click", function () {
+    if (video.paused) video.play(); else video.pause();
+  });
+  $("btnResume").addEventListener("click", function () {
+    if (!currentItem) return;
+    video.currentTime = ticksOf(currentItem).pos / TICKS;
+    video.play();
+  });
+  $("btnClose").addEventListener("click", closePlayer);
+  video.addEventListener("play", function () {
+    $("btnPlay").textContent = "暂停";
+    post("/Sessions/Playing", {
+      ItemId: currentItem && currentItem.Id,
+      PositionTicks: Math.round(video.currentTime * TICKS),
+      RunTimeTicks: (currentItem && currentItem.RunTimeTicks) || 0
+    });
+    startTimer();
+  });
+  video.addEventListener("pause", function () {
+    $("btnPlay").textContent = "播放";
+    postStopped();
+    stopTimer();
+  });
+  video.addEventListener("ended", function () {
+    postStopped();
+    stopTimer();
+  });
+
+  // ---------- init ----------
+  loadServerInfo();
+  loadLibrary();
+  loadLog();
+  setInterval(loadLog, 10000);
+})();
+</script>
+</body>
+</html>
