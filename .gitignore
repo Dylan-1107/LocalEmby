@@ -41,3 +41,9 @@ poster_*.jpg
 .idea/
 .vscode/
 *.iml
+
+# Gradle
+.gradle/
+local.properties
+*.hprof
+app/build/

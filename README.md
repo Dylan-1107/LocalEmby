@@ -6,6 +6,8 @@
 
 ## 功能
 
+- **HyperOS 风格界面**：基于 [Miuix](https://github.com/compose-miuix-ui/miuix)（Compose Multiplatform UI 库）重写，卡片式布局、系统级观感
+
 - **本地目录即媒体库**：用系统文件夹选择器（SAF）授权目录，或用 MediaStore 扫全机视频
 - **Emby API 模拟**：实现登录、媒体库、条目列表/详情、PlaybackInfo、图片、视频流（HTTP Range 拖动）、播放进度上报等接口
 - **续播与进度记忆**：通过 Emby 的 `PlaybackPositionTicks` 协议上报，客户端原生「继续观看」生效；多个客户端共享同一份进度
@@ -30,45 +32,30 @@ app/
       DanmuProxy.java       # 弹幕源代理（match + comment）
       ThumbProvider.java    # 视频抽帧缩略图 / 占位图
       HttpService.java      # 前台服务
-      MainActivity.java     # 主界面：启停、地址复制、目录选择、端口
+      MainActivity.kt       # 主界面（Miuix/Compose）：启停、地址复制、目录选择、端口、弹幕源
       LogActivity.java      # 请求日志
       Settings.java         # 偏好设置
       BootReceiver.java     # 开机恢复
     res/                    # 布局与资源
   assets/web/index.html     # 浏览器调试页（列表 + 播放 + 进度上报）
-build.ps1                   # 无 Gradle 的手动构建脚本
-fix_asset_paths.py          # 修正 aapt2 在 Windows 上生成的 assets 路径分隔符
 ```
 
 ## 构建
 
-本项目**不依赖 Gradle / Android Studio**，用 aapt2 + javac + d8 + apksigner 直接打包，方便在任意 Windows 机器上复现。
+需要 JDK 17 与 Android SDK（compileSdk 36 / build-tools 36.0.0）。
 
-### 1. 准备工具链
+```bash
+# 1. 配置 SDK 路径
+echo "sdk.dir=/path/to/android-sdk" > local.properties
 
-放到 `tools/` 目录下（该目录已在 `.gitignore` 中忽略）：
-
-```
-tools/
-  jdk-17.x.x/          # Temurin JDK 17
-  android-34/          # Android SDK platform（提供 android.jar）
-  android-14/          # Android build-tools 34（aapt2 / d8 / zipalign / apksigner）
+# 2. 打包
+./gradlew assembleRelease
+# 产物：app/build/outputs/apk/release/app-release.apk
 ```
 
-- JDK：https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jdk/x64/windows/
-- platform：`https://dl.google.com/android/repository/platform-34-ext7_r03.zip`（解压后为 `android-34/`）
-- build-tools：`https://dl.google.com/android/repository/build-tools_r34-windows.zip`（解压后目录名为 `android-14/`）
+签名默认使用仓库根目录的 `debug.keystore`（`signingConfigs.local`），正式发布请替换为你自己的密钥。
 
-### 2. 打包
-
-```powershell
-pwsh -File build.ps1
-# 产物：LocalEmby-1.0.0.apk（自动生成 debug.keystore 并签名）
-```
-
-构建流程：`aapt2 compile` → `aapt2 link` → `javac --release 8` → `d8` → 合并 dex → 修正 assets 路径 → `zipalign` → `apksigner`。
-
-> 说明：aapt2 在 Windows 上会把 assets 条目名写成反斜杠，`fix_asset_paths.py` 负责改成 `/`，同时保持 `resources.arsc` 未压缩（targetSdk 30+ 的硬性要求）。
+技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36。
 
 ## 使用
 
@@ -116,6 +103,7 @@ GET  {base}/api/v2/comment/{id}  ?withRelated=true    → {count, comments:[{p,m
 - **不做转码**：只提供直连播放，客户端需自行支持文件编码（Hills / YAmby 内置 mpv，支持良好）
 - **无用户体系**：任意账号密码都能登录，仅建议本机或可信局域网使用
 - **无 WebSocket**：部分客户端的实时会话推送不可用，不影响播放
+- **APK 体积约 7MB**：Compose 运行时占用较大
 - **`MediaStreams` 为占位信息**：部分客户端会显示固定的 1080p H.264 / AAC，实际轨道由播放器自行探测
 - 小米等 ROM 对后台限制较严，若服务器被杀，可在系统设置里允许自启动并锁定后台
 
