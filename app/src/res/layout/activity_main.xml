@@ -48,7 +48,7 @@
             android:layout_marginTop="20dp"
             android:background="?android:attr/selectableItemBackground"
             android:padding="4dp"
-            android:text="http://127.0.0.1:8096"
+            android:text="请在 App 中查看本机和局域网地址"
             android:textColor="@color/accent"
             android:textSize="24sp"
             android:textStyle="bold" />

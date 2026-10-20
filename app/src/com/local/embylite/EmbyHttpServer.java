@@ -95,7 +95,7 @@ public class EmbyHttpServer {
             }, "EmbyLite-Accept");
             t.setDaemon(true);
             t.start();
-            EmbyLog.info("EmbyLite started at http://127.0.0.1:" + port);
+            EmbyLog.info("EmbyLite started on port " + port + " (本机/局域网均可访问)");
         } catch (IOException e) {
             Log.e("EmbyLite", "HTTP server bind failed on port " + port, e);
             EmbyLog.info("EmbyLite start failed on " + port + ": " + e.getClass().getName()

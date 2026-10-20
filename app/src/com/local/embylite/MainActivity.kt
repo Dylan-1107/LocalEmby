@@ -217,7 +217,7 @@ private fun HomeScreen(p: Palette) {
 
             Spacer(Modifier.height(16.dp))
 
-            HeroCard(p, running, uptimeMin, port)
+            HeroCard(p, running, uptimeMin, port, lanIp)
 
             Spacer(Modifier.height(12.dp))
 
@@ -233,7 +233,9 @@ private fun HomeScreen(p: Palette) {
                 }
                 VDivider(p)
                 ActionCell("复制", Blue, Modifier.weight(1f)) {
-                    copy(ctx, "http://127.0.0.1:$port")
+                    val ip = lanIp
+                    if (ip != null) copy(ctx, "http://$ip:$port")
+                    else toast(ctx, "未获取到局域网地址，请连接 Wi-Fi")
                 }
                 VDivider(p)
                 ActionCell("刷新", Orange, Modifier.weight(1f)) { rescan() }
@@ -515,7 +517,7 @@ private fun Text(
 /* ---------------- 组件 ---------------- */
 
 @Composable
-private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int) {
+private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int, lanIp: String?) {
     val tint = if (running) Green else p.sub
     val brush = if (running) {
         Brush.linearGradient(listOf(Color(0xFF10402A), Color(0xFF123024), Color(0xFF0A1A12)))
@@ -555,7 +557,7 @@ private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int) {
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "http://127.0.0.1:$port",
+                    "http://${lanIp ?: "127.0.0.1"}:$port",
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
                     color = if (running) Color(0xFF8FA79A) else p.sub,
@@ -742,23 +744,4 @@ private fun treeDisplayPath(ctx: Context): String {
     }.getOrDefault("")
 }
 
-private fun lanIpAddress(): String? {
-    return runCatching {
-        val ifaces = java.net.NetworkInterface.getNetworkInterfaces()
-        var fallback: String? = null
-        while (ifaces.hasMoreElements()) {
-            val ni = ifaces.nextElement()
-            if (!ni.isUp || ni.isLoopback) continue
-            val addrs = ni.inetAddresses
-            while (addrs.hasMoreElements()) {
-                val a = addrs.nextElement()
-                if (a.isLoopbackAddress || a !is java.net.Inet4Address) continue
-                val h = a.hostAddress ?: continue
-                if (h.startsWith("169.254")) continue
-                if (h.startsWith("192.168.") || h.startsWith("10.") || h.startsWith("172.")) return h
-                if (fallback == null) fallback = h
-            }
-        }
-        fallback
-    }.getOrNull()
-}
+private fun lanIpAddress(): String? = NetworkUtils.getLanIp()

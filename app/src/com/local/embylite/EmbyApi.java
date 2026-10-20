@@ -260,7 +260,11 @@ public class EmbyApi {
         put(j, "SupportsLibraryMonitor", false);
         put(j, "StartUpProgressCompleted", true);
         put(j, "CompletedInstallations", arr());
-        put(j, "LocalAddress", "http://127.0.0.1:" + EmbyHttpServer.currentPort);
+        String lanIp = NetworkUtils.getLanIp();
+        String localAddress = lanIp == null
+                ? "http://127.0.0.1:" + EmbyHttpServer.currentPort
+                : "http://" + lanIp + ":" + EmbyHttpServer.currentPort;
+        put(j, "LocalAddress", localAddress);
         if (full) {
             put(j, "AccessToken", ACCESS_TOKEN);
             put(j, "WebSocketPortNumber", 8920);

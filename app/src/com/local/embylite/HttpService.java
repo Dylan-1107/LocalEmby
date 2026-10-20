@@ -28,7 +28,7 @@ public class HttpService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        isServiceRunning = true;
+        isServiceRunning = false;
         // 部分国产 ROM 后台限流严重，持有 partial wakelock 保证 CPU 不休眠
         try {
             android.os.PowerManager pm =
@@ -51,15 +51,26 @@ public class HttpService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         int port = Settings.getPort(this);
-        if (startedAt == 0L) startedAt = System.currentTimeMillis();
+        startForeground(NOTIFICATION_ID, buildNotification(port));
         try {
             EmbyHttpServer.start(this, port);
-            if (!EmbyHttpServer.isRunning()) {
+            isServiceRunning = EmbyHttpServer.isRunning();
+            if (!isServiceRunning) {
                 EmbyLog.info("HTTP 服务未监听，端口可能被占用: " + port);
             }
         } catch (Throwable t) {
             EmbyLog.info("HttpService 启动服务器失败: " + t.getClass().getName() + ": " + t.getMessage());
         }
+        isServiceRunning = EmbyHttpServer.isRunning();
+        if (!isServiceRunning) {
+            startedAt = 0L;
+            android.widget.Toast.makeText(this, "服务器启动失败，请检查端口和请求日志",
+                    android.widget.Toast.LENGTH_LONG).show();
+            stopForeground(true);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (startedAt == 0L) startedAt = System.currentTimeMillis();
         startForeground(NOTIFICATION_ID, buildNotification(port));
         return START_STICKY;
     }
@@ -71,7 +82,9 @@ public class HttpService extends Service {
         } catch (Throwable t) {
             EmbyLog.info("统计视频数量失败: " + t);
         }
-        String content = "http://127.0.0.1:" + port + " · 视频 " + count + " 部";
+        String lanIp = NetworkUtils.getLanIp();
+        String address = lanIp == null ? "http://127.0.0.1:" + port : "http://" + lanIp + ":" + port;
+        String content = address + " · 视频 " + count + " 部";
 
         PendingIntent pi = PendingIntent.getActivity(
                 this,
@@ -85,7 +98,7 @@ public class HttpService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        b.setContentTitle("本地影院服务器运行中")
+        b.setContentTitle(isServiceRunning ? "本地影院服务器运行中" : "本地影院服务器启动中")
                 .setContentText(content)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(pi)
@@ -96,6 +109,7 @@ public class HttpService extends Service {
     @Override
     public void onDestroy() {
         isServiceRunning = false;
+        startedAt = 0L;
         try {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Throwable ignored) {
