@@ -90,9 +90,8 @@ public class ProgressDb {
     public synchronized void onStart(String itemId, long durationTicks) {
         if (itemId == null || itemId.isEmpty()) return;
         JSONObject e = entry(itemId, durationTicks);
-        setLong(e, "positionTicks", 0L);
+        // Keep the saved position until the client reports its actual resumed position.
         if (durationTicks > 0) setLong(e, "durationTicks", durationTicks);
-        setBool(e, "played", false);
         setInt(e, "playCount", e.optInt("playCount", 0) + 1);
         setLong(e, "lastPlayedMs", System.currentTimeMillis());
         save();
@@ -113,9 +112,10 @@ public class ProgressDb {
         setLong(e, "positionTicks", Math.max(0L, positionTicks));
         if (durationTicks > 0) setLong(e, "durationTicks", durationTicks);
         long d = e.optLong("durationTicks", 0L);
-        boolean played = d > 0 && positionTicks * 100 >= d * 95; // >=95% 算看完
+        boolean played = d > 0 && (double)positionTicks / d >= 0.95; // >=95% 算看完
         setBool(e, "played", played);
         setLong(e, "lastPlayedMs", System.currentTimeMillis());
+        lastSaveMs = 0; // Stop events must survive immediate process exit.
         save();
     }
 

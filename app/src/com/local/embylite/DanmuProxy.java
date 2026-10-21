@@ -32,6 +32,11 @@ public class DanmuProxy {
         return s;
     }
 
+    /** 按本地剧集身份匹配，成功绑定跨重启保存。 */
+    public static int matchEpisode(android.content.Context ctx, Item item) {
+        return EpisodeMatcher.resolve(ctx, item, false);
+    }
+
     /** 按文件名匹配剧集，返回 episodeId；失败返回 -1。 */
     public static synchronized int matchEpisode(android.content.Context ctx, String itemId, String fileName) {
         Integer cached = MATCH_CACHE.get(itemId);
@@ -47,7 +52,15 @@ public class DanmuProxy {
             }
             org.json.JSONArray ms = o.optJSONArray("matches");
             if (ms == null || ms.length() == 0) return -1;
-            int ep = ms.optJSONObject(0).optInt("episodeId", -1);
+            Item identity = new Item("", fileName, "", 0, 0);
+            int ep = -1;
+            for (int i = 0; i < ms.length(); i++) {
+                JSONObject candidate = ms.optJSONObject(i);
+                if (candidate == null || !EpisodeMatcher.accepts(identity, candidate)) continue;
+                int id = candidate.optInt("episodeId", -1);
+                if (ep > 0 && ep != id) return -1;
+                ep = id;
+            }
             if (ep > 0) MATCH_CACHE.put(itemId, ep);
             return ep;
         } catch (Throwable t) {
@@ -76,6 +89,10 @@ public class DanmuProxy {
     }
 
     private static String get(String url) {
+        return DanmuNetwork.request(url, null);
+    }
+
+    private static String legacyGet(String url) {
         HttpURLConnection c = null;
         try {
             c = (HttpURLConnection) new URL(url).openConnection();
@@ -84,16 +101,25 @@ public class DanmuProxy {
             c.setRequestMethod("GET");
             c.setRequestProperty("Accept", "application/json");
             c.setRequestProperty("User-Agent", "LocalEmby/1.0");
-            if (c.getResponseCode() / 100 != 2) return null;
+            int status = c.getResponseCode();
+            if (status / 100 != 2) {
+                EmbyLog.info("danmu upstream HTTP " + status);
+                return null;
+            }
             return readAll(c.getInputStream());
         } catch (Throwable t) {
+            EmbyLog.info("danmu network " + t.getClass().getSimpleName() + ": " + t.getMessage());
             return null;
         } finally {
             if (c != null) c.disconnect();
         }
     }
 
-    private static String post(String url, String body) {
+    static String post(String url, String body) {
+        return DanmuNetwork.request(url, body);
+    }
+
+    private static String legacyPost(String url, String body) {
         HttpURLConnection c = null;
         try {
             byte[] data = body.getBytes("UTF-8");
@@ -112,9 +138,14 @@ public class DanmuProxy {
             } finally {
                 os.close();
             }
-            if (c.getResponseCode() / 100 != 2) return null;
+            int status = c.getResponseCode();
+            if (status / 100 != 2) {
+                EmbyLog.info("danmu upstream HTTP " + status);
+                return null;
+            }
             return readAll(c.getInputStream());
         } catch (Throwable t) {
+            EmbyLog.info("danmu network " + t.getClass().getSimpleName() + ": " + t.getMessage());
             return null;
         } finally {
             if (c != null) c.disconnect();
@@ -144,8 +175,9 @@ public class DanmuProxy {
         String base = it.name;
         if (it.isEpisode()) {
             // 规范化成弹幕源最容易识别的形式
-            base = it.seriesName + " S" + String.format("%02d", it.seasonNumber)
-                    + "E" + String.format("%02d", it.episodeNumber);
+            base = it.seriesName + (it.seasonExplicit
+                    ? String.format(java.util.Locale.ROOT, " S%02dE%02d", it.seasonNumber, it.episodeNumber)
+                    : String.format(java.util.Locale.ROOT, " EP%02d", it.episodeNumber));
         }
         return base + "." + ext;
     }

@@ -280,6 +280,24 @@ public class EmbyHttpServer {
             return 200;
         }
 
+        if (method.equals("GET") && path.equalsIgnoreCase("/api/episodes/status")) {
+            JSONObject status = new JSONObject();
+            org.json.JSONArray items = new org.json.JSONArray();
+            try {
+                for (Item item : VideoLibrary.get(ctx, Settings.getFolderPath(ctx))) {
+                    if (item.episodeNumber <= 0) continue;
+                    JSONObject entry = EpisodeMatcher.binding(ctx, item);
+                    entry.put("id", item.id).put("name", item.name).put("series", item.seriesName)
+                            .put("season", item.seasonNumber).put("seasonExplicit", item.seasonExplicit)
+                            .put("episode", item.episodeNumber).put("ambiguous", item.identityAmbiguous);
+                    items.put(entry);
+                }
+                status.put("progress", EpisodeMatcher.progress).put("items", items);
+            } catch (Exception ignored) { }
+            sendResp(out, EmbyApi.Resp.json(status.toString()), head);
+            return 200;
+        }
+
         // 弹幕：客户端请求 /api/danmu/{itemId}?option=GetJsonById，代理到弹弹play 兼容 API
         if (method.equals("GET") && path.toLowerCase(Locale.US).startsWith("/api/danmu/")) {
             String rest = path.substring("/api/danmu/".length());
@@ -291,7 +309,7 @@ public class EmbyHttpServer {
                 return 404;
             }
             String payload = null;
-            int epId = DanmuProxy.matchEpisode(ctx, dmItem.id, DanmuProxy.matchFileName(dmItem));
+            int epId = DanmuProxy.matchEpisode(ctx, dmItem);
             if (epId > 0) payload = DanmuProxy.comments(ctx, epId);
             if (payload == null) payload = DanmuProxy.emptyPayload();
             EmbyLog.info("danmu " + dmItem.name + " episodeId=" + epId);
@@ -325,9 +343,11 @@ public class EmbyHttpServer {
         m = P_IMAGE.matcher(path);
         if (m.matches()) {
             Item item = VideoLibrary.findById(ctx, Settings.getFolderPath(ctx), m.group(1));
+            if (item == null) item = EmbyApi.imageRepresentative(ctx, m.group(1));
             byte[] jpg = null;
             String metaKey = item == null ? m.group(1) : item.name;
             jpg = MetadataStore.posterBytes(ctx, metaKey);
+            if (jpg == null && item != null) jpg = MetadataStore.posterBytes(ctx, "episode_" + item.id);
             if (jpg == null && item != null) jpg = ThumbProvider.get(ctx, item);
             if (jpg == null) {
                 jpg = ThumbProvider.placeholder(ctx, item == null ? "本地影院" : item.name);

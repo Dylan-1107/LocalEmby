@@ -33,7 +33,10 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
   - **所有文件访问权限**：在系统设置里一次性授予 `MANAGE_EXTERNAL_STORAGE`，之后直接扫全盘，无需选目录（本项目不上架 Play，不受其政策限制）
 - **Emby API 模拟**：实现登录、媒体库、条目列表/详情、PlaybackInfo、图片、视频流（HTTP Range 拖动）、播放进度上报等接口
 - **续播与进度记忆**：通过 Emby 的 `PlaybackPositionTicks` 协议上报，客户端原生「继续观看」生效；多个客户端共享同一份进度
-- **自动弹幕**：客户端请求 `/api/danmu/{itemId}` 时，按文件名匹配弹弹play 兼容弹幕源并返回弹幕数据
+- **剧集识别**：结合**父目录名与文件名**解析「剧名 / 季 / 集」（`SxxExx`、`第N集`、`EPxx`、纯数字等），区分「明确季」「未分季」「特别篇」，并把多集合并、上下篇等文件标记为**命名有歧义**，不参与自动绑定
+- **剧集结构浏览**：Emby 客户端里按「剧集 → 季 → 集」层级浏览（`/shows/{id}/Episodes`、`/shows/nextup`、`/items`），不再把所有文件摊平成电影
+- **自动弹幕**：客户端请求 `/api/danmu/{itemId}` 时，按**剧集身份**（剧名 + 季 + 集）匹配弹弹play 兼容弹幕源，并对候选做二次校验，避免错绑同名剧集；绑定结果带指纹缓存（弹幕源 / 路径 / 大小 / 身份），文件或配置变化会自动失效重识
+- **识别结果可视化**：首页「剧集与弹幕识别」卡片显示识别进度、每个文件的绑定状态（已绑定 / 命名有歧义 / 待确认候选 / 未找到匹配 / 网络失败），候选可一键确认，失败可重新识别
 - **刮削元数据**：支持通过 `/api/dev/metadata` 注入标题、简介、年份、评分、演职人员、海报
 - **后台常驻**：前台服务 + WakeLock + 开机自启（仅在你主动开启过服务器时恢复）
 - **请求日志**：App 内可查看全部请求，便于排查客户端兼容问题
@@ -49,6 +52,10 @@ app/
       EmbyApi.java          # Emby 协议层：System/Users/Items/PlaybackInfo/Sessions 等
       VideoLibrary.java     # 媒体库扫描（SAF / MediaStore / 目录遍历）
       Item.java             # 条目模型 + 文件名剧集解析（SxxExx、第N集、EPxx）
+      EpisodeIdentity.java  # 剧集身份解析：父目录 + 文件名 → 剧名/季/集，标记歧义与特别篇
+      EpisodeMatcher.java   # 弹幕剧集绑定：搜索、校验、缓存（带指纹）、进度
+      EpisodeMatchPolicy.java # 候选校验策略（纯 Java，独立回归测试）
+      DanmuNetwork.java     # 弹幕源网络层（OkHttp + HTTPS DNS 兜底）
       ProgressDb.java       # 播放进度存储（Emby ticks）
       MetadataStore.java    # 刮削元数据覆盖层
       DanmuProxy.java       # 弹幕源代理（match + comment）
@@ -60,6 +67,8 @@ app/
       BootReceiver.java     # 开机恢复
     res/                    # 布局与资源
   assets/web/index.html     # 浏览器调试页（列表 + 播放 + 进度上报）
+tests/
+  EpisodeRegression.java    # 剧集解析 / 候选校验回归测试（纯 Java，无需设备）
 ```
 
 ## 构建
@@ -79,6 +88,20 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36。
 
+### 剧集解析回归测试
+
+剧集身份解析与候选校验是纯 Java 逻辑，改完命名规则后先跑一遍回归，不需要设备或 Gradle：
+
+```bash
+javac -encoding UTF-8 -d build/regress \
+  app/src/com/local/embylite/EpisodeIdentity.java \
+  app/src/com/local/embylite/EpisodeMatchPolicy.java \
+  app/src/com/local/embylite/Item.java \
+  tests/EpisodeRegression.java
+java -cp build/regress com.local.embylite.EpisodeRegression
+# 期望输出：PASS <n> episode identity and candidate regression cases
+```
+
 ## 使用
 
 1. 安装 APK，打开「本地影院」
@@ -91,14 +114,21 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 ## 弹幕
 
-客户端会向服务器请求 `/api/danmu/{itemId}?option=GetJsonById`，服务端按文件名（规范化为 `剧名 S01E01.mkv`）向弹弹play 兼容的弹幕 API 发起匹配：
+客户端会向服务器请求 `/api/danmu/{itemId}?option=GetJsonById`。服务端**先建立「文件 → 弹幕剧集」绑定**，再取该剧集的弹幕：
 
 ```
 POST {base}/api/v2/match          {"fileName":"..."}  → matches[0].episodeId
 GET  {base}/api/v2/comment/{id}  ?withRelated=true    → {count, comments:[{p,m}]}
 ```
 
-弹幕源地址在 `Settings.getDanmuApi()` 中配置（默认值见 `DanmuProxy.DEFAULT_API`，可自行替换为你部署的弹弹play 兼容服务）。
+绑定不是简单取 `matches[0]`：`EpisodeMatchPolicy` 会用本地解析出的「剧名 / 季 / 集」去校验每个候选的标题与集号，只有**剧名归一化后一致、集号相同、季信息不冲突**才接受。
+
+- **明确季**的文件（`S02E03`、`第二季第3集`）必须有季证据才能绑定，避免第二季被绑到第一季
+- **未分季**的文件只会绑定到同样未分季的候选；**特别篇**（`S00`）不会绑到正片
+- **命名有歧义**的文件（`S01E01-E02` 合集、上下篇等）不参与自动绑定，需拆分后重识
+- 绑定结果按「弹幕源 + 路径 + 大小 + 解析身份」生成指纹缓存，任一变化即失效重识；首页卡片可查看进度、确认候选、重新识别
+
+弹幕源地址在 `Settings.getDanmuApi()` 中配置（默认值见 `DanmuProxy.DEFAULT_API`，可自行替换为你部署的弹弹play 兼容服务）。网络层（`DanmuNetwork`）在系统 DNS 失败时走 DoH 兜底，同时保留原始主机名、SNI 与证书校验。
 
 > 弹幕内容来自第三方服务，本项目不存储、不提供任何弹幕内容。
 
@@ -111,12 +141,15 @@ GET  {base}/api/v2/comment/{id}  ?withRelated=true    → {count, comments:[{p,m
 | `GET /Users/{uid}/Views` | 媒体库视图 |
 | `GET /Users/{uid}/Items` | 条目列表（分页、排序、搜索、ParentId 过滤） |
 | `GET /Users/{uid}/Items/Latest`、`/Items/Resume` | 最新 / 继续观看 |
-| `GET /Users/{uid}/Items/{id}` | 条目详情 |
-| `POST /Items/{id}/PlaybackInfo` | 播放信息（直连播放） |
+| `GET /Users/{uid}/Items/{id}` | 条目详情（含 Series / Season 虚拟条目） |
+| `GET /Shows/{seriesId}/Episodes`、`/Shows/{seriesId}/Seasons` | 剧集 → 季 → 集层级浏览 |
+| `GET /Shows/NextUp` | 下一集 |
+| `POST /Items/{id}/PlaybackInfo` | 播放信息（直连播放，缺失时长时自动探测） |
 | `GET /Videos/{id}/stream` | 视频流，支持 HTTP Range |
-| `GET /Items/{id}/Images/Primary` | 缩略图 / 刮削海报 |
+| `GET /Items/{id}/Images/Primary` | 缩略图 / 刮削海报（Series / Season 复用代表帧） |
 | `POST /Sessions/Playing[/Progress|/Stopped]` | 播放进度上报 |
-| `GET /api/danmu/{id}` | 弹幕代理 |
+| `GET /api/danmu/{id}` | 弹幕代理（按剧集绑定） |
+| `GET /api/episodes/status` | 剧集识别进度与每个文件的绑定状态 |
 | `POST /api/dev/metadata` | 注入刮削元数据 |
 | `GET /api/dev/log` | 请求日志 |
 

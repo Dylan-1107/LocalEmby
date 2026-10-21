@@ -38,7 +38,10 @@ public class VideoLibrary {
         List<Item> c = cache;
         if (c == null) {
             synchronized (VideoLibrary.class) {
-                if (cache == null) cache = scanAuto(ctx, folderPath);
+                if (cache == null) {
+                    cache = scanAuto(ctx, folderPath);
+                    EpisodeMatcher.enqueue(ctx, cache);
+                }
                 c = cache;
             }
         }
@@ -174,7 +177,10 @@ public class VideoLibrary {
             String rootId = android.provider.DocumentsContract.getTreeDocumentId(tree);
             android.net.Uri rootDoc =
                     android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, rootId);
-            walkSaf(ctx, tree, rootDoc, out, 0);
+            List<String> parentNames = new ArrayList<String>();
+            String rootName = safDisplayName(ctx, rootDoc);
+            if (rootName != null && !rootName.isEmpty()) parentNames.add(rootName);
+            walkSaf(ctx, tree, rootDoc, out, 0, parentNames);
         } catch (Throwable t) {
             EmbyLog.info("SAF 扫描失败: " + t);
         }
@@ -187,8 +193,16 @@ public class VideoLibrary {
         return out;
     }
 
+    private static String safDisplayName(Context ctx, android.net.Uri uri) {
+        try (Cursor cursor = ctx.getContentResolver().query(uri,
+                new String[]{android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
+        } catch (Exception e) { EmbyLog.info("SAF root name unavailable"); }
+        return "";
+    }
+
     private static void walkSaf(Context ctx, android.net.Uri tree, android.net.Uri dirUri,
-                                List<Item> out, int depth) {
+                                List<Item> out, int depth, List<String> parentNames) {
         if (depth > 5) return;
         Cursor c = null;
         try {
@@ -211,11 +225,15 @@ public class VideoLibrary {
                 if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     android.net.Uri sub = android.provider.DocumentsContract
                             .buildDocumentUriUsingTree(tree, docId);
-                    walkSaf(ctx, tree, sub, out, depth + 1);
+                    List<String> childNames = new ArrayList<String>(parentNames);
+                    childNames.add(name);
+                    walkSaf(ctx, tree, sub, out, depth + 1, childNames);
                 } else if (isVideo(name)) {
                     android.net.Uri doc = android.provider.DocumentsContract
                             .buildDocumentUriUsingTree(tree, docId);
-                    out.add(new Item(doc.toString(), stripExt(name), ext(name), size, 0));
+                    Item item = new Item(doc.toString(), stripExt(name), ext(name), size, 0);
+                    item.setDirectoryContext(parentNames);
+                    out.add(item);
                 }
             }
         } catch (Throwable t) {

@@ -2,6 +2,8 @@ package com.local.embylite;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.CRC32;
 
 /** 纯数据类：一个本地视频条目。 */
@@ -18,6 +20,8 @@ public class Item {
     public String seriesName = "";
     public int seasonNumber = 0;
     public int episodeNumber = 0;
+    public boolean seasonExplicit = false;
+    public boolean identityAmbiguous = false;
 
     public Item() {
     }
@@ -29,62 +33,44 @@ public class Item {
         this.sizeBytes = sizeBytes;
         this.durationMs = durationMs;
         this.id = idForPath(path);
-        parseSeriesInfo();
+        parseSeriesInfo(parentNamesFromPath(path));
     }
 
-    /** 解析 "剧名 S01E02" / "剧名 第3集" / "剧名 EP03" / "剧名 03" 等常见命名。 */
-    private void parseSeriesInfo() {
-        if (name == null) return;
-        String s = name.trim();
-        java.util.regex.Matcher m;
-        // SxxExx
-        m = java.util.regex.Pattern
-                .compile("^(.*?)[\\s._\\-\\[\\]]*[Ss](\\d{1,2})[\\s._-]*[Ee](\\d{1,4})\\b.*$")
-                .matcher(s);
-        if (m.matches()) {
-            setSeries(m.group(1), m.group(2), m.group(3));
-            return;
-        }
-        // 第N集 / 第N话
-        m = java.util.regex.Pattern
-                .compile("^(.*?)[\\s._\\-\\[\\]]*第\\s*(\\d{1,4})\\s*[集话話期].*$")
-                .matcher(s);
-        if (m.matches()) {
-            setSeries(m.group(1), "1", m.group(2));
-            return;
-        }
-        // EPxx / Exx
-        m = java.util.regex.Pattern
-                .compile("^(.*?)[\\s._\\-\\[\\]]*(?:EP|Ep|ep|E)(\\d{1,4})\\b.*$")
-                .matcher(s);
-        if (m.matches()) {
-            setSeries(m.group(1), "1", m.group(2));
-            return;
-        }
-        // 结尾纯数字（需有分隔符，避免把年份当集数）
-        m = java.util.regex.Pattern
-                .compile("^(.*?)[\\s._\\-\\[\\]]+(\\d{1,3})$")
-                .matcher(s);
-        if (m.matches()) {
-            setSeries(m.group(1), "1", m.group(2));
-        }
+    /** 用显式父目录名称重新解析，SAF 调用方传入 document displayName 层级。 */
+    public void parseSeriesInfo(String[] parentNames) {
+        EpisodeIdentity identity = EpisodeIdentity.parse(name, parentNames);
+        seriesName = identity.seriesName;
+        seasonNumber = identity.seasonNumber;
+        episodeNumber = identity.episodeNumber;
+        seasonExplicit = identity.seasonExplicit;
+        identityAmbiguous = identity.identityAmbiguous;
     }
 
-    private void setSeries(String series, String season, String episode) {
-        try {
-            String s = series == null ? "" : series.replaceAll("[\\s._\\-\\[\\]()]+$", "").trim();
-            int ep = Integer.parseInt(episode);
-            int se = Integer.parseInt(season);
-            if (s.isEmpty() || ep <= 0 || ep > 999) return;
-            seriesName = s;
-            seasonNumber = Math.max(se, 1);
-            episodeNumber = ep;
-        } catch (Throwable ignored) {
-        }
+    public void parseSeriesInfo() {
+        parseSeriesInfo(parentNamesFromPath(path));
+    }
+
+    public void setDirectoryContext(List<String> parentNames) {
+        parseSeriesInfo(parentNames == null ? null : parentNames.toArray(new String[0]));
+    }
+
+    public static String normalizeTitle(String value) {
+        return EpisodeIdentity.normalizeTitle(value);
     }
 
     public boolean isEpisode() {
-        return seriesName != null && !seriesName.isEmpty() && episodeNumber > 0;
+        return !identityAmbiguous && seriesName != null && !seriesName.isEmpty() && episodeNumber > 0;
+    }
+
+    private static String[] parentNamesFromPath(String value) {
+        if (value == null || value.startsWith("content://")) return new String[0];
+        String normalized = value.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        if (slash <= 0) return new String[0];
+        String[] parts = normalized.substring(0, slash).split("/");
+        List<String> names = new ArrayList<String>();
+        for (String part : parts) if (!part.isEmpty()) names.add(part);
+        return names.toArray(new String[0]);
     }
 
     /** 对绝对路径生成稳定的 16 进制 id。 */

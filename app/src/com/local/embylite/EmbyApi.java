@@ -172,7 +172,10 @@ public class EmbyApi {
         mm = P_USER_ITEM.matcher(lp);
         if (mm.matches()) {
             Item it = VideoLibrary.findById(ctx, Settings.getFolderPath(ctx), mm.group(2));
-            if (it == null) return notFound(p);
+            if (it == null) {
+                JSONObject folder = virtualItem(ctx, mm.group(mm.groupCount()));
+                return folder == null ? notFound(p) : Resp.json(folder.toString());
+            }
             return Resp.json(itemJson(it, ctx).toString());
         }
 
@@ -185,13 +188,17 @@ public class EmbyApi {
         mm = P_ITEM.matcher(lp);
         if (mm.matches()) {
             Item it = VideoLibrary.findById(ctx, Settings.getFolderPath(ctx), mm.group(1));
-            if (it == null) return notFound(p);
+            if (it == null) {
+                JSONObject folder = virtualItem(ctx, mm.group(mm.groupCount()));
+                return folder == null ? notFound(p) : Resp.json(folder.toString());
+            }
             return Resp.json(itemJson(it, ctx).toString());
         }
 
         mm = P_SHOWS.matcher(lp);
-        if (mm.matches()) return Resp.json(EMPTY_LIST);
-        if (lp.equals("/shows/nextup")) return Resp.json(EMPTY_LIST);
+        if (mm.matches()) return Resp.json(showItems(ctx, req, mm.group(1), mm.group(2)));
+        if (lp.equals("/shows/nextup")) return Resp.json(nextUpJson(ctx, req));
+        if (lp.equals("/items")) return Resp.json(itemsJson(ctx, req));
 
         // 筛选器聚合端点：无元数据，统一返回空列表
         if (lp.equals("/genres") || lp.equals("/years") || lp.equals("/studios")
@@ -227,6 +234,10 @@ public class EmbyApi {
         if (itemId.isEmpty()) itemId = nz(req.query.get("ItemId")).trim();
         long pos = b.optLong("PositionTicks", 0L);
         long dur = b.optLong("RunTimeTicks", 0L);
+        if (dur <= 0) {
+            Item media = VideoLibrary.findById(ctx, Settings.getFolderPath(ctx), itemId);
+            if (media != null) dur = media.durationMs * 10000L;
+        }
         boolean paused = b.optBoolean("IsPaused", false);
 
         String tail = lp.equals("/sessions/playing") ? "" : lp.substring("/sessions/playing".length());
@@ -347,7 +358,7 @@ public class EmbyApi {
         put(v, "Name", "全部视频");
         put(v, "ServerId", SERVER_ID);
         put(v, "Type", "CollectionFolder");
-        put(v, "CollectionType", "movies");
+        put(v, "CollectionType", "mixed");
         put(v, "MediaType", "Video");
         put(v, "UserData", emptyUserData());
         put(v, "ChildCount", n);
@@ -469,7 +480,7 @@ public class EmbyApi {
         put(j, "Etag", it.id);
         put(j, "ServerId", SERVER_ID);
         put(j, "ParentId", "viewall");
-        put(j, "Type", "Movie");
+        put(j, "Type", it.isEpisode() ? "Episode" : "Movie");
         put(j, "MediaType", "Video");
         put(j, "VideoType", "VideoFile");
         put(j, "LocationType", "FileSystem");
@@ -508,12 +519,16 @@ public class EmbyApi {
         if (it.isEpisode()) {
             put(j, "SeriesName", it.seriesName);
             put(j, "SeriesId", Item.idForPath("series:" + it.seriesName));
-            put(j, "SeasonId", Item.idForPath("season:" + it.seriesName + "#" + it.seasonNumber));
-            put(j, "ParentIndexNumber", it.seasonNumber);
+            if (it.seasonExplicit) {
+                put(j, "SeasonId", Item.idForPath("season:" + it.seriesName + "#" + it.seasonNumber));
+                put(j, "ParentIndexNumber", it.seasonNumber);
+                put(j, "SeasonName", it.seasonNumber == 0 ? "特别篇" : "第 " + it.seasonNumber + " 季");
+            }
             put(j, "IndexNumber", it.episodeNumber);
             put(j, "IndexNumberEnd", it.episodeNumber);
-            put(j, "SeasonName", "第 " + it.seasonNumber + " 季");
-            put(j, "ParentId", Item.idForPath("series:" + it.seriesName));
+            put(j, "ParentId", seasonId(it));
+            put(j, "SeasonId", seasonId(it));
+            put(j, "SeriesPrimaryImageTag", "thumb");
             put(j, "EpisodeTitle", "第 " + it.episodeNumber + " 集");
         }
         applyMetadata(j, ctx, it.name, detailed);
@@ -579,6 +594,16 @@ public class EmbyApi {
 
     /** PlaybackInfo 响应：告知客户端可直接播放（direct play），无需转码。 */
     private static JSONObject playbackInfo(Item it, Context ctx) {
+        if (it.durationMs <= 0) {
+            android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+            try {
+                if (it.path.startsWith("content://")) retriever.setDataSource(ctx, android.net.Uri.parse(it.path));
+                else retriever.setDataSource(it.path);
+                String duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                if (duration != null) it.durationMs = Long.parseLong(duration);
+            } catch (Exception e) { EmbyLog.info("duration unavailable: " + it.name); }
+            finally { try { retriever.release(); } catch (Exception ignored) { } }
+        }
         JSONObject base = itemJson(it, ctx);
         JSONArray srcs = base.optJSONArray("MediaSources");
         if (srcs == null) srcs = arr();
@@ -602,7 +627,173 @@ public class EmbyApi {
         return out;
     }
 
+    private static String seriesId(Item item) { return Item.idForPath("series:" + item.seriesName); }
+    private static String seasonId(Item item) {
+        return Item.idForPath("season:" + item.seriesName + "#" + (item.seasonExplicit ? item.seasonNumber : "unknown"));
+    }
+    private static List<Item> library(Context ctx) {
+        return VideoLibrary.get(ctx, Settings.getFolderPath(ctx));
+    }
+    private static Comparator<Item> episodeOrder() {
+        return Comparator.comparingInt((Item i) -> i.seasonExplicit && i.seasonNumber == 0 ? Integer.MAX_VALUE : i.seasonNumber)
+                .thenComparingInt(i -> i.episodeNumber).thenComparing(i -> i.name);
+    }
+    public static Item imageRepresentative(Context ctx, String id) {
+        for (Item item : library(ctx)) {
+            if (item.isEpisode() && (seriesId(item).equals(id) || seasonId(item).equals(id))) return item;
+        }
+        return null;
+    }
+    private static JSONObject folderJson(Context ctx, Item representative, boolean season) {
+        String id = season ? seasonId(representative) : seriesId(representative);
+        JSONObject j = itemJson(representative, ctx, false);
+        put(j, "Id", id); put(j, "Etag", id);
+        put(j, "Name", season ? (representative.seasonExplicit ? (representative.seasonNumber == 0 ? "特别篇" : "第 " + representative.seasonNumber + " 季") : "未分季") : representative.seriesName);
+        put(j, "SortName", j.optString("Name"));
+        put(j, "Type", season ? "Season" : "Series"); put(j, "IsFolder", true);
+        put(j, "ParentId", season ? seriesId(representative) : "viewall");
+        put(j, "SupportsPlaying", true); put(j, "CanDownload", false);
+        for (String key : new String[]{"Path", "Container", "Size", "RunTimeTicks", "MediaSources", "MediaStreams", "MediaSourceCount", "IndexNumberEnd", "EpisodeTitle", "SeasonId", "ParentIndexNumber"}) j.remove(key);
+        if (season && representative.seasonExplicit) put(j, "IndexNumber", representative.seasonNumber);
+        else j.remove("IndexNumber");
+        if (!season) { j.remove("SeriesId"); j.remove("SeasonName"); j.remove("SeriesName"); }
+        int total = 0, unplayed = 0; Set<String> seasons = new HashSet<>();
+        for (Item item : library(ctx)) {
+            if (!item.isEpisode() || !(season ? seasonId(item).equals(id) : seriesId(item).equals(id))) continue;
+            total++; seasons.add(seasonId(item));
+            if (!ProgressDb.get(ctx).userData(item.id).optBoolean("Played")) unplayed++;
+        }
+        JSONObject user = emptyUserData();
+        put(user, "Played", total > 0 && unplayed == 0); put(user, "UnplayedItemCount", unplayed);
+        put(j, "UserData", user); put(j, "ChildCount", season ? total : seasons.size());
+        put(j, "RecursiveItemCount", total); put(j, "UnplayedItemCount", unplayed);
+        put(j, "DisplayOrder", "Aired"); put(j, "Status", "Continuing");
+        return j;
+    }
+    private static JSONObject virtualItem(Context ctx, String id) {
+        if ("viewall".equals(id)) return viewJson(ctx);
+        for (Item item : library(ctx)) {
+            if (!item.isEpisode()) continue;
+            if (seriesId(item).equals(id)) return folderJson(ctx, item, false);
+            if (seasonId(item).equals(id)) return folderJson(ctx, item, true);
+        }
+        return null;
+    }
+    private static String resultPage(List<JSONObject> values, Req req) {
+        int total = values.size();
+        int start = Math.max(0, Math.min(total, parseInt(req.query.get("StartIndex"), 0)));
+        int limit = Math.max(0, parseInt(req.query.get("Limit"), total));
+        int end = (int)Math.min(total, (long)start + limit);
+        JSONArray items = arr(); for (int i = start; i < end; i++) put(items, values.get(i));
+        JSONObject result = obj(); put(result, "Items", items); put(result, "TotalRecordCount", total); put(result, "StartIndex", start);
+        return result.toString();
+    }
+    private static String showItems(Context ctx, Req req, String series, String kind) {
+        List<Item> episodes = new ArrayList<>();
+        String season = req.query.get("SeasonId");
+        Integer number = parseIntOrNull(req.query.get("Season"));
+        for (Item item : library(ctx)) {
+            if (!item.isEpisode() || !seriesId(item).equals(series)) continue;
+            if (season != null && !season.isEmpty() && !seasonId(item).equals(season)) continue;
+            if (number != null && (!item.seasonExplicit || item.seasonNumber != number)) continue;
+            episodes.add(item);
+        }
+        Collections.sort(episodes, episodeOrder());
+        List<JSONObject> result = new ArrayList<>(); Set<String> seen = new HashSet<>();
+        boolean after = !req.query.containsKey("StartItemId");
+        String adjacent = req.query.get("AdjacentTo");
+        for (int i = 0; i < episodes.size(); i++) {
+            Item item = episodes.get(i);
+            if (kind.equals("seasons")) {
+                if (seen.add(seasonId(item))) result.add(folderJson(ctx, item, true));
+            } else {
+                if (!after && item.id.equals(req.query.get("StartItemId"))) after = true;
+                if (!after) continue;
+                if (adjacent != null && !adjacent.isEmpty()) {
+                    int center = -1;
+                    for (int k = 0; k < episodes.size(); k++) if (episodes.get(k).id.equals(adjacent)) center = k;
+                    if (center < 0 || Math.abs(i - center) > 1) continue;
+                }
+                if ("true".equalsIgnoreCase(req.query.get("IsMissing"))) continue;
+                result.add(itemJson(item, ctx, false));
+            }
+        }
+        return resultPage(result, req);
+    }
+    private static String nextUpJson(Context ctx, Req req) {
+        Map<String, List<Item>> groups = new java.util.LinkedHashMap<>();
+        for (Item item : library(ctx)) if (item.isEpisode()) groups.computeIfAbsent(seriesId(item), k -> new ArrayList<>()).add(item);
+        Map<String, JSONObject> history = new HashMap<>();
+        JSONArray raw = ProgressDb.get(ctx).rawEntries();
+        for (int i = 0; i < raw.length(); i++) { JSONObject e = raw.optJSONObject(i); if (e != null) history.put(e.optString("itemId"), e); }
+        List<JSONObject> result = new ArrayList<>();
+        String wanted = req.query.get("SeriesId");
+        for (Map.Entry<String, List<Item>> group : groups.entrySet()) {
+            if (wanted != null && !wanted.isEmpty() && !wanted.equals(group.getKey())) continue;
+            List<Item> episodes = group.getValue(); Collections.sort(episodes, episodeOrder());
+            int latest = -1; long timestamp = 0;
+            for (int i = 0; i < episodes.size(); i++) {
+                JSONObject h = history.get(episodes.get(i).id);
+                if (h != null && h.optLong("lastPlayedMs") >= timestamp && h.optLong("lastPlayedMs") > 0) {
+                    latest = i; timestamp = h.optLong("lastPlayedMs");
+                }
+            }
+            if (latest < 0) continue;
+            Item last = episodes.get(latest); JSONObject h = history.get(last.id);
+            int index = h.optBoolean("played") ? latest + 1 : latest;
+            while (index < episodes.size()) {
+                Item next = episodes.get(index++);
+                // Do not silently jump between unknown seasons or into specials.
+                if (next != last && (!seasonId(next).equals(seasonId(last))
+                        && (!last.seasonExplicit || !next.seasonExplicit || next.seasonNumber == 0))) break;
+                if (!ProgressDb.get(ctx).userData(next.id).optBoolean("Played")) {
+                    JSONObject j = itemJson(next, ctx, false); put(j, "NextUpLastPlayedMs", timestamp); result.add(j); break;
+                }
+            }
+        }
+        result.sort((a,b) -> Long.compare(b.optLong("NextUpLastPlayedMs"), a.optLong("NextUpLastPlayedMs")));
+        return resultPage(result, req);
+    }
     private static String itemsJson(Context ctx, Req req) {
+        String types = nz(req.query.get("IncludeItemTypes")).toLowerCase(Locale.ROOT);
+        String parent = nz(req.query.get("ParentId"));
+        String ids = nz(req.query.get("Ids"));
+        boolean recursive = "true".equalsIgnoreCase(req.query.get("Recursive"));
+        List<JSONObject> result = new ArrayList<>(); Set<String> seen = new HashSet<>();
+        Set<String> wanted = new HashSet<>(java.util.Arrays.asList(ids.split(",")));
+        boolean leaf = recursive || types.contains("episode") || types.contains("movie") || !ids.isEmpty();
+        for (Item item : library(ctx)) {
+            boolean episode = item.isEpisode();
+            if (!ids.isEmpty()) {
+                if (wanted.contains(item.id)) result.add(itemJson(item, ctx, false));
+                if (episode && wanted.contains(seriesId(item)) && seen.add(seriesId(item))) result.add(folderJson(ctx, item, false));
+                if (episode && wanted.contains(seasonId(item)) && seen.add(seasonId(item))) result.add(folderJson(ctx, item, true));
+                continue;
+            }
+            if (types.equals("series")) {
+                if (episode && (parent.isEmpty() || parent.equals("viewall")) && seen.add(seriesId(item))) result.add(folderJson(ctx, item, false));
+            } else if (episode && parent.equals(seriesId(item)) && !leaf) {
+                if (seen.add(seasonId(item))) result.add(folderJson(ctx, item, true));
+            } else if (episode && (parent.equals(seasonId(item)) || (parent.equals(seriesId(item)) && leaf))) {
+                result.add(itemJson(item, ctx, false));
+            } else if (parent.isEmpty() || parent.equals("viewall")) {
+                if (episode && !leaf) { if (seen.add(seriesId(item))) result.add(folderJson(ctx, item, false)); }
+                else if (types.isEmpty() || (episode ? types.contains("episode") : types.contains("movie"))) result.add(itemJson(item, ctx, false));
+            }
+        }
+        String search = nz(req.query.get("SearchTerm")).toLowerCase(Locale.ROOT);
+        result.removeIf(j -> !j.optString("Name").toLowerCase(Locale.ROOT).contains(search));
+        result.sort((a,b) -> {
+            int season = Integer.compare(a.optInt("ParentIndexNumber", -1), b.optInt("ParentIndexNumber", -1));
+            if (season != 0) return season;
+            if (a.has("IndexNumber") && b.has("IndexNumber")) return Integer.compare(a.optInt("IndexNumber"), b.optInt("IndexNumber"));
+            return a.optString("SortName").compareToIgnoreCase(b.optString("SortName"));
+        });
+        if ("Descending".equalsIgnoreCase(req.query.get("SortOrder"))) Collections.reverse(result);
+        return resultPage(result, req);
+    }
+
+    private static String legacyItemsJson(Context ctx, Req req) {
         List<Item> list = new ArrayList<Item>(
                 VideoLibrary.get(ctx, Settings.getFolderPath(ctx)));
 

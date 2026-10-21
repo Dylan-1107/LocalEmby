@@ -39,6 +39,9 @@ rename_backup_*.txt
 push_metadata.py
 poster_*.jpg
 
+# 回归测试编译产物（只提交 tests/*.java 源码）
+*.class
+
 # IDE
 .idea/
 .vscode/

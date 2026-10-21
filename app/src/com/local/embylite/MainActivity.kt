@@ -126,10 +126,14 @@ private fun HomeScreen(p: Palette) {
     var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
     var allFiles by remember { mutableStateOf(VideoLibrary.hasAllFilesAccess()) }
     var prevAllFiles by remember { mutableStateOf(allFiles) }
+    var episodeProgress by remember { mutableStateOf(EpisodeMatcher.progress) }
+    var showMatches by remember { mutableStateOf(false) }
+    var episodeItems by remember { mutableStateOf(emptyList<Item>()) }
 
     LaunchedEffect(Unit) {
         while (true) {
             running = HttpService.isServiceRunning
+            episodeProgress = EpisodeMatcher.progress
             port = Settings.getPort(ctx)
             uptimeMin = if (running && HttpService.startedAt > 0)
                 (System.currentTimeMillis() - HttpService.startedAt) / 60000 else 0
@@ -291,6 +295,75 @@ private fun HomeScreen(p: Palette) {
                 ) { picker.launch(null) }
                 InfoCard(p, "弹幕源", if (danmuDraft.isBlank()) "内置默认" else "自定义", Modifier.weight(1f)) {
                     editingDanmu = !editingDanmu
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)) {
+                Text("剧集与弹幕识别", fontSize = 15.sp, color = p.text)
+                Text(episodeProgress, fontSize = 11.sp, color = p.sub)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PillButton("重新识别", Blue, Modifier.weight(1f)) {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                EpisodeMatcher.enqueue(ctx, VideoLibrary.get(ctx, Settings.getFolderPath(ctx)), true)
+                            }
+                        }
+                    }
+                    PillButton("查看结果", p.cardAlt, Modifier.weight(1f)) {
+                        scope.launch {
+                            episodeItems = withContext(Dispatchers.IO) {
+                                VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).filter { it.episodeNumber > 0 }
+                            }
+                            showMatches = !showMatches
+                        }
+                    }
+                }
+                if (showMatches) {
+                    episodeItems.forEach { item ->
+                        val result = EpisodeMatcher.binding(ctx, item)
+                        val matched = result.optInt("episodeId") > 0
+                        Spacer(Modifier.height(10.dp))
+                        Text(item.name, fontSize = 13.sp, color = p.text)
+                        val local = if (item.seasonExplicit) "第${item.seasonNumber}季 · 第${item.episodeNumber}集"
+                                    else "季未知 · 第${item.episodeNumber}集"
+                        val stateLabel = when {
+                            matched -> "已绑定"
+                            item.identityAmbiguous -> "命名有歧义"
+                            result.optString("status") == "network_error" -> "网络失败，请重试"
+                            result.optString("status") == "needs_confirmation" -> "待确认候选"
+                            result.optString("status") == "unmatched" -> "未找到匹配"
+                            else -> "等待识别"
+                        }
+                        Text("$local · $stateLabel", fontSize = 11.sp,
+                            color = if (matched) Green else Orange)
+                        if (matched) Text(result.optString("episodeTitle"), fontSize = 11.sp, color = p.sub)
+                        if (result.optString("status") == "network_error") {
+                            Text(result.optString("error", "连接未成功，请重新识别"), fontSize = 11.sp, color = p.sub)
+                        }
+                        if (item.identityAmbiguous) {
+                            Text("多集或上下篇文件，请拆分后识别", fontSize = 11.sp, color = Orange)
+                        } else if (!matched) {
+                            val candidates = result.optJSONArray("candidates")
+                            if (candidates != null) for (i in 0 until candidates.length()) {
+                                val candidate = candidates.optJSONObject(i) ?: continue
+                                val candidateId = candidate.optInt("episodeId", -1)
+                                if (candidateId > 0) {
+                                    Text("确认：" + candidate.optString("animeTitle") + " / " + candidate.optString("episodeTitle"),
+                                        fontSize = 12.sp, color = Blue,
+                                        modifier = Modifier.fillMaxWidth().clickable {
+                                            scope.launch {
+                                                val ok = withContext(Dispatchers.IO) { EpisodeMatcher.confirm(ctx, item, candidateId) }
+                                                toast(ctx, if (ok) "已确认绑定" else "绑定失败，请重新识别")
+                                                episodeProgress = EpisodeMatcher.progress + " "
+                                            }
+                                        }.padding(vertical = 8.dp))
+                                }
+                            }
+                        }
+                    }
+                    if (episodeItems.isEmpty()) Text("尚无可解析的剧集文件", fontSize = 12.sp, color = p.sub)
                 }
             }
 

@@ -138,7 +138,7 @@ public class MetadataStore {
         return new File(dir, safe + ".jpg");
     }
 
-    private static void savePoster(Context ctx, String key, byte[] jpg) throws Exception {
+    public static void savePoster(Context ctx, String key, byte[] jpg) throws Exception {
         if (jpg == null || jpg.length == 0) return;
         File f = posterFile(ctx, key);
         File parent = f.getParentFile();

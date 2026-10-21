@@ -13,8 +13,8 @@ android {
         applicationId = "com.local.embylite"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "2.4.1"
+        versionCode = 10
+        versionName = "2.5.2"
     }
 
     // 沿用原有目录结构，保持 build.ps1（无 Gradle 手动打包）可用
@@ -65,6 +65,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
