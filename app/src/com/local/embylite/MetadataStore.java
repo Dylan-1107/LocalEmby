@@ -113,6 +113,25 @@ public class MetadataStore {
         return e;
     }
 
+    /** 删除某文件的覆盖层条目（清除刮削结果用）。 */
+    public static synchronized void remove(Context ctx, String fileName) {
+        if (fileName == null || fileName.isEmpty()) return;
+        try {
+            JSONObject items = raw(ctx).optJSONObject("items");
+            if (items == null) return;
+            java.util.Iterator<String> it = items.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                if (k.equalsIgnoreCase(fileName)) {
+                    items.remove(k);
+                    save(ctx, raw(ctx));
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 取海报 JPEG 字节；无则 null。 */
     public static byte[] posterBytes(Context ctx, String fileName) {
         if (fileName == null || fileName.isEmpty()) return null;

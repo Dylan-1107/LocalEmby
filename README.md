@@ -20,11 +20,11 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
 
 ## 界面
 
-底部导航分为四项：**首页**、**弹幕**、**日志**、**设置**。
+底部导航分为四项：**首页**、**视频信息**、**日志**、**设置**。
 
 - **首页**：只保留服务器状态、访问地址、启停/复制/刷新、服务数值与运行指标
-- **弹幕**：独立一页，固定头部（识别进度 + 已绑定/待处理/失败统计 + 筛选页签），下方是独立滚动的结果列表，不再是整条长滚动
-- **设置**：媒体目录、服务端口、开机自启、Root 保活、弹幕源
+- **视频信息**：独立一页，固定头部（弹幕绑定 + 元数据刮削两组统计 + 筛选页签），下方是独立滚动的结果列表，逐文件查看与确认候选
+- **设置**：媒体目录、服务端口、开机自启、Root 保活、弹幕源、TMDB 刮削
 
 | 首页 | 弹幕识别 |
 | --- | --- |
@@ -50,7 +50,11 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
 - **剧集识别**：结合**父目录名与文件名**解析「剧名 / 季 / 集」（`SxxExx`、`第N集`、`EPxx`、纯数字等），区分「明确季」「未分季」「特别篇」，并把多集合并、上下篇等文件标记为**命名有歧义**，不参与自动绑定
 - **剧集结构浏览**：Emby 客户端里按「剧集 → 季 → 集」层级浏览（`/shows/{id}/Episodes`、`/shows/nextup`、`/items`），不再把所有文件摊平成电影
 - **自动弹幕**：客户端请求 `/api/danmu/{itemId}` 时，按**剧集身份**（剧名 + 季 + 集）匹配弹弹play 兼容弹幕源，并对候选做二次校验，避免错绑同名剧集；绑定结果带指纹缓存（弹幕源 / 路径 / 大小 / 身份），文件或配置变化会自动失效重识
-- **识别结果可视化**：「弹幕」页顶部固定显示识别进度与已绑定 / 待处理 / 失败统计，可按状态筛选；列表项展开可查看详情并一键确认候选
+- **识别结果可视化**：「视频信息」页顶部为 HyperOS 设置风格分组卡片（开关 / 锚定下拉 / 进度条），展示弹幕绑定与元数据刮削的进度、已处理 / 待确认 / 失败统计，可按状态筛选；列表项展开可查看详情、确认候选、**重新搜索（可改关键词）或清除结果**——刮错了只纠错那一个文件
+- **增量识别与刮削**：识别/刮削任务分三种模式——**增量刷新**（默认，只处理新增与失败重试）、**重试失败与待确认**、**全量重建**（需二次确认，人工锁定结果不覆盖）；待确认/未命中条目保持安静，不再每次扫描反复请求；失败按指数退避重试；支持中途取消
+- **剧集级刮削聚合**：同一部剧只做一次 TMDB 搜索 / 详情 / 海报下载，分集共享（请求量降 ~95%）；一部剧确认候选后同剧其他待确认集自动继承；`tvshow.nfo` 与剧集海报每剧只写一次
+- **媒体库索引增量**：扫描结果持久化索引，重启 / 刷新只 diff——新增/变化的文件才探测时长并入队，消失的文件自动清理状态；文件未变时秒出，不再全量重扫
+- **元数据刮削（TMDB）**：扫描后自动按文件名 / 剧名搜索 TMDB（zh-CN），唯一命中自动刮削，多候选进「待确认」人工选择；结果写入元数据覆盖层（标题、简介、年份、评分、演职人员、海报），并**尽力生成 Kodi 兼容 NFO（`<视频名>.nfo` / `tvshow.nfo` / `movie.nfo`）与 `poster.jpg` 落盘到视频目录**（SAF 或只读目录时自动回退应用私有目录）；本地已有 NFO 的文件直接导入、不走网络；刮削状态带指纹缓存（Key / 路径 / 大小 / 身份），文件或配置变化自动重刮。TMDB Key 默认内置公共 Key 开箱即用，可在「设置 → 视频信息」替换为你自己的（themoviedb.org 免费申请）
 - **刮削元数据**：支持通过 `/api/dev/metadata` 注入标题、简介、年份、评分、演职人员、海报
 - **后台常驻**：前台服务 + WakeLock + 开机自启（仅在你主动开启过服务器时恢复）
 - **Root 保活（可选）**：设备已 root 时，可在「设置」页开启；开启后每次启动服务器会用 `su` 把本应用加入电池优化白名单、解除后台限制并拉起前台服务，降低被 ROM 杀后台的概率。**未 root 或拒绝授权时自动跳过，不影响正常使用**；也可随时手动触发一次
@@ -65,8 +69,8 @@ app/
     com/local/embylite/
       # ---- Compose UI（沿用原有卡片样式）----
       MainActivity.kt       # 导航壳 + 首页内容（HomeContent）+ 底部导航
-      DanmuPage.kt          # 弹幕页：固定头部（进度/统计/筛选）+ 独立滚动结果列表
-      SettingsPage.kt       # 设置页：媒体目录、端口、开机自启、Root 保活、弹幕源
+      VideoInfoPage.kt      # 视频信息页：弹幕绑定 + 元数据刮削统计/筛选/候选确认
+      SettingsPage.kt       # 设置页：媒体目录、端口、开机自启、Root 保活、弹幕源、TMDB 刮削
       LogActivity.kt        # 请求日志页
 
       # ---- 服务端逻辑（Java）----
@@ -77,6 +81,11 @@ app/
       EpisodeIdentity.java  # 剧集身份解析：父目录 + 文件名 → 剧名/季/集，标记歧义与特别篇
       EpisodeMatcher.java   # 弹幕剧集绑定：搜索、校验、缓存（带指纹）、进度
       EpisodeMatchPolicy.java # 候选校验策略（纯 Java，独立回归测试）
+      ScrapeTitle.java      # 文件名 → 搜索标题 + 年份（纯 Java，独立回归测试）
+      ScrapePolicy.java     # TMDB 候选接受策略（纯 Java，独立回归测试）
+      NfoData/NfoWriter/NfoParser.java # Kodi 兼容 NFO 模型/生成/解析（纯 Java）
+      TmdbClient.java       # TMDB API v3 客户端（搜索/详情/分集/海报）
+      VideoInfoService.java # 元数据刮削编排：TMDB → 覆盖层 + NFO/海报落盘（带指纹）
       DanmuNetwork.java     # 弹幕源网络层（OkHttp + HTTPS DNS 兜底）
       ProgressDb.java       # 播放进度存储（Emby ticks）
       MetadataStore.java    # 刮削元数据覆盖层
@@ -108,20 +117,33 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 签名默认使用仓库根目录的 `debug.keystore`（`signingConfigs.local`），正式发布请替换为你自己的密钥。
 
-技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36 · **版本 2.6.0（versionCode 11）**。
+技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36 · **版本 2.8.0（versionCode 13）**。
 
-### 剧集解析回归测试
+### 纯 Java 回归测试
 
-剧集身份解析与候选校验是纯 Java 逻辑，改完命名规则后先跑一遍回归，不需要设备或 Gradle：
+剧集解析与刮削核心（身份解析 / 标题净化 / 候选校验 / NFO 读写）都是纯 Java 逻辑，改完规则先跑回归，不需要设备或 Gradle：
 
 ```bash
+# 剧集解析 / 弹幕候选校验
 javac -encoding UTF-8 -d build/regress \
   app/src/com/local/embylite/EpisodeIdentity.java \
   app/src/com/local/embylite/EpisodeMatchPolicy.java \
   app/src/com/local/embylite/Item.java \
   tests/EpisodeRegression.java
 java -cp build/regress com.local.embylite.EpisodeRegression
-# 期望输出：PASS <n> episode identity and candidate regression cases
+# 期望输出：PASS 38 episode identity and candidate regression cases
+
+# 刮削核心（标题净化 / TMDB 策略 / NFO 读写）
+javac -encoding UTF-8 -d build/scrape \
+  app/src/com/local/embylite/EpisodeIdentity.java \
+  app/src/com/local/embylite/ScrapeTitle.java \
+  app/src/com/local/embylite/ScrapePolicy.java \
+  app/src/com/local/embylite/NfoData.java \
+  app/src/com/local/embylite/NfoWriter.java \
+  app/src/com/local/embylite/NfoParser.java \
+  tests/ScrapeRegression.java
+java -cp build/scrape com.local.embylite.ScrapeRegression
+# 期望输出：PASS 22 scrape regression cases
 ```
 
 ## 使用

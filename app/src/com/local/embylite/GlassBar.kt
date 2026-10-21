@@ -1,179 +1,93 @@
 package com.local.embylite
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import top.yukonga.miuix.kmp.anim.SinOutEasing
-import top.yukonga.miuix.kmp.basic.Icon
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBarDisplayMode
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.darkColorScheme
+import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 /**
- * 底部导航栏：图标在上（选中为实心）、小字在下，排布与 LSPosed 一致。
+ * 底部导航栏 —— 移植自 HyperLight（KiminonawaResa/HyperLight）的设置界面底栏。
  *
- * 关于柔光玻璃：miuix-blur 的 `layerBackdrop` 只能捕获**自身 composable** 所绘制
- * 的内容，一旦把被模糊的表面自己也包进捕获范围，采样源与被采样者就形成自引用，
- * RenderThread 会无限递归并 SIGSEGV（实测崩溃）。因此这里不用全屏捕获，
- * 改用「半透明底 + 玻璃高光描边」的等效观感：不依赖 RuntimeShader，任何设备都稳。
+ * HyperLight 的 Compose 层经 R8 混淆无法直接提取调用代码，但其底栏组件本体是
+ * MiuiX（Apache-2.0）的 `FloatingNavigationBar` + `FloatingNavigationBarItem`
+ * （miuix 0.8.8 起就在 top.yukonga.miuix.kmp.basic 包内），模糊质感则是 Haze 同款思路。
+ * 当前形态（按用户要求迭代）：
+ *   - IconOnly 纯图标模式：无文字，图标 28dp 居中紧凑胶囊；
+ *   - 选中态用「中粗描边」（2.2~2.4f，原 3.2~3.6f 太粗）；
+ *   - 液态玻璃：Haze（dev.chrisbanes.haze:haze:1.7.3，Apache-2.0）真背景模糊——
+ *     MainActivity 在页面区包了 hazeSource，这里通过 FloatingNavigationBar 的
+ *     modifier 参数挂 hazeEffect（组件内部 clip 成胶囊形，模糊被裁进胶囊轮廓）。
+ *     Android 12+ 真模糊（RenderEffect），更低版本自动退化为 fallbackTint 半透明底。
+ *     item 着色读 MiuixTheme.colorScheme.onSurfaceContainer，因此外面包一层
+ *     MiuixTheme，把 Embylite 的明暗 Palette 映射到 miuix 的浅色/深色方案上。
+ *
+ * 历史备注：此前自绘版本不用模糊，是因为当时试 miuix-blur 的 layerBackdrop 时把
+ * 被模糊表面自己也包进了捕获范围（自引用导致 SIGSEGV）。Haze 的 hazeSource /
+ * hazeEffect 是兄弟节点分工，不存在该自引用问题。
  */
 @Composable
 internal fun AppNavBar(
     tab: Int,
     p: Palette,
+    haze: HazeState,
     onSelect: (Int) -> Unit
 ) {
-    val labels = listOf("首页", "弹幕", "日志", "设置")
-    val icons = listOf(IconHome, IconDanmu, IconLog, IconSettings)
-    val iconsOn = listOf(IconHomeFilled, IconDanmuFilled, IconLogFilled, IconSettingsFilled)
-    val barShape = RoundedCornerShape(50)
+    val labels = listOf("首页", "视频信息", "日志", "设置")
+    val icons = listOf(IconHome, IconInfo, IconLog, IconSettings)
+    val iconsOn = listOf(IconHomeFilled, IconInfoFilled, IconLogFilled, IconSettingsFilled)
     val dark = p.bg == Color.Black
 
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
-            .padding(top = 4.dp, bottom = 16.dp)
+    MiuixTheme(
+        colors = if (dark) darkColorScheme() else lightColorScheme()
     ) {
-        // 底板：半透明让页面内容透出来，配上下不对称的玻璃高光描边
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .background(p.cardAlt.copy(alpha = if (dark) 0.88f else 0.82f), barShape)
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        listOf(
-                            Color.White.copy(alpha = if (dark) 0.20f else 0.85f),
-                            Color.White.copy(alpha = if (dark) 0.05f else 0.35f)
-                        )
+        FloatingNavigationBar(
+            // 本体透明，玻璃感全部交给 hazeEffect 的模糊底
+            color = Color.Transparent,
+            mode = FloatingNavigationBarDisplayMode.IconOnly,
+            modifier = Modifier.hazeEffect(
+                state = haze,
+                style = HazeStyle(
+                    backgroundColor = p.bg,
+                    // 淡淡的底色 tint：模糊之上再叠一层玻璃材质色
+                    tints = listOf(
+                        HazeTint(p.cardAlt.copy(alpha = if (dark) 0.68f else 0.62f))
                     ),
-                    shape = barShape
+                    blurRadius = 24.dp,
+                    noiseFactor = 0.12f,
+                    // Android 12 以下无 RenderEffect，退化为半透明玻璃底
+                    fallbackTint = HazeTint(p.cardAlt.copy(alpha = 0.9f))
                 )
-        )
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+            )
         ) {
             labels.forEachIndexed { i, label ->
-                NavItem(
-                    label = label,
-                    icon = icons[i],
-                    iconOn = iconsOn[i],
+                FloatingNavigationBarItem(
                     selected = tab == i,
-                    p = p,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSelect(i) }
+                    onClick = { onSelect(i) },
+                    // 选中中粗描边、未选中细描边
+                    icon = if (tab == i) iconsOn[i] else icons[i],
+                    label = label // 无障碍朗读用，IconOnly 模式不显示
                 )
             }
         }
     }
 }
 
-/** 单项：图标在上（选中为实心）、小字在下。 */
-@Composable
-private fun NavItem(
-    label: String,
-    icon: ImageVector,
-    iconOn: ImageVector,
-    selected: Boolean,
-    p: Palette,
-    modifier: Modifier,
-    onClick: () -> Unit
-) {
-    // 图标用 Crossfade 做"空心 ↔ 实心"的平滑替换，颜色同步渐变
-    val iconColor by animateColorAsState(
-        targetValue = if (selected) Blue else p.sub,
-        animationSpec = tween(240, easing = SinOutEasing),
-        label = "navIconColor"
-    )
-    val textColor by animateColorAsState(
-        targetValue = if (selected) Blue else p.sub,
-        animationSpec = tween(240, easing = SinOutEasing),
-        label = "navTextColor"
-    )
-    val iconScale by animateFloatAsState(
-        targetValue = if (selected) 1.10f else 1f,
-        animationSpec = tween(260, easing = SinOutEasing),
-        label = "navIconScale"
-    )
-
-    Column(
-        modifier
-            .fillMaxSize()
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = label },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (selected) {
-                Box(
-                    Modifier
-                        .size(38.dp)
-                        .background(Blue.copy(alpha = 0.14f), RoundedCornerShape(50))
-                )
-            }
-            androidx.compose.animation.Crossfade(
-                targetState = selected,
-                animationSpec = tween(180),
-                label = "navIcon"
-            ) { on ->
-                Icon(
-                    imageVector = if (on) iconOn else icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(23.dp * iconScale)
-                )
-            }
-        }
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = label,
-            modifier = Modifier.fillMaxWidth(),
-            color = textColor,
-            fontSize = 10.5.sp,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
-        )
-    }
-}
-
-/* ---------- 图标：手写矢量（未引入 miuix-icons 依赖） ---------- */
+/* ---------- 图标：手写矢量（沿用原版，未引入 miuix-icons 依赖） ---------- */
 
 private fun lineIcon(
     name: String,
@@ -197,7 +111,8 @@ private fun lineIcon(
         )
     }.build()
 
-/* 每个图标两个版本：细描边（未选中）+ 粗描边（选中，视觉上接近实心）。 */
+/* 每个图标两个版本：细描边（未选中 1.7f）+ 中粗描边（选中 2.2~2.4f）。
+ * 注：选中版曾用 3.2~3.6f 模拟实心，用户反馈太粗，已调细。 */
 
 /** 首页：房子。 */
 val IconHome: ImageVector by lazy { lineIcon("Home", 1.7f) {
@@ -206,24 +121,29 @@ val IconHome: ImageVector by lazy { lineIcon("Home", 1.7f) {
     lineTo(9.4f, 14.4f); lineTo(9.4f, 20.4f); lineTo(3.4f, 20.4f); close()
 } }
 
-val IconHomeFilled: ImageVector by lazy { lineIcon("HomeFilled", 3.6f) {
+val IconHomeFilled: ImageVector by lazy { lineIcon("HomeFilled", 2.4f) {
     moveTo(3.4f, 10.6f); lineTo(12f, 3.4f); lineTo(20.6f, 10.6f)
     lineTo(20.6f, 20.4f); lineTo(14.6f, 20.4f); lineTo(14.6f, 14.4f)
     lineTo(9.4f, 14.4f); lineTo(9.4f, 20.4f); lineTo(3.4f, 20.4f); close()
 } }
 
-/** 弹幕：带省略号的气泡。 */
-val IconDanmu: ImageVector by lazy { lineIcon("Danmu", 1.7f) {
-    moveTo(4.2f, 4.4f); lineTo(19.8f, 4.4f); lineTo(19.8f, 16.0f)
-    lineTo(9.8f, 16.0f); lineTo(5.6f, 19.8f); lineTo(5.6f, 16.0f); lineTo(4.2f, 16.0f); close()
-    moveTo(8.6f, 10.2f); lineTo(8.7f, 10.2f)
-    moveTo(11.9f, 10.2f); lineTo(12.1f, 10.2f)
-    moveTo(15.3f, 10.2f); lineTo(15.5f, 10.2f)
+/** 视频信息：圆圈 i。 */
+val IconInfo: ImageVector by lazy { lineIcon("Info", 1.7f) {
+    moveTo(12.0f, 4.0f)
+    arcTo(8.0f, 8.0f, 0.0f, false, true, 12.0f, 20.0f)
+    arcTo(8.0f, 8.0f, 0.0f, false, true, 12.0f, 4.0f)
+    close()
+    moveTo(11.9f, 8.3f); lineTo(12.1f, 8.3f)
+    moveTo(12.0f, 11.4f); lineTo(12.0f, 16.2f)
 } }
 
-val IconDanmuFilled: ImageVector by lazy { lineIcon("DanmuFilled", 3.6f) {
-    moveTo(4.2f, 4.4f); lineTo(19.8f, 4.4f); lineTo(19.8f, 16.0f)
-    lineTo(9.8f, 16.0f); lineTo(5.6f, 19.8f); lineTo(5.6f, 16.0f); lineTo(4.2f, 16.0f); close()
+val IconInfoFilled: ImageVector by lazy { lineIcon("InfoFilled", 2.2f) {
+    moveTo(12.0f, 4.0f)
+    arcTo(8.0f, 8.0f, 0.0f, false, true, 12.0f, 20.0f)
+    arcTo(8.0f, 8.0f, 0.0f, false, true, 12.0f, 4.0f)
+    close()
+    moveTo(11.9f, 8.3f); lineTo(12.1f, 8.3f)
+    moveTo(12.0f, 11.4f); lineTo(12.0f, 16.2f)
 } }
 
 /** 日志：三条横线。 */
@@ -233,7 +153,7 @@ val IconLog: ImageVector by lazy { lineIcon("Log", 1.7f) {
     moveTo(4.2f, 17.6f); lineTo(13.2f, 17.6f)
 } }
 
-val IconLogFilled: ImageVector by lazy { lineIcon("LogFilled", 3.6f) {
+val IconLogFilled: ImageVector by lazy { lineIcon("LogFilled", 2.4f) {
     moveTo(4.2f, 6.4f); lineTo(19.8f, 6.4f)
     moveTo(4.2f, 12.0f); lineTo(19.8f, 12.0f)
     moveTo(4.2f, 17.6f); lineTo(13.2f, 17.6f)
@@ -247,7 +167,7 @@ val IconSettings: ImageVector by lazy { lineIcon("Settings", 1.7f) {
     moveTo(5.8f, 13.8f); lineTo(8.4f, 13.8f); lineTo(8.4f, 19.0f); lineTo(5.8f, 19.0f); close()
 } }
 
-val IconSettingsFilled: ImageVector by lazy { lineIcon("SettingsFilled", 3.6f) {
+val IconSettingsFilled: ImageVector by lazy { lineIcon("SettingsFilled", 2.4f) {
     moveTo(3.8f, 7.6f); lineTo(20.2f, 7.6f)
     moveTo(3.8f, 16.4f); lineTo(20.2f, 16.4f)
     moveTo(15.6f, 5.0f); lineTo(18.2f, 5.0f); lineTo(18.2f, 10.2f); lineTo(15.6f, 10.2f); close()

@@ -15,6 +15,8 @@ public class Item {
     public String container;
     public long sizeBytes;
     public long durationMs;
+    /** 文件修改时间：媒体库索引 diff 用（SAF/MediaStore 取不到时为 0，按 size 兜底）。 */
+    public long mtime;
 
     /** 从文件名解析出的剧集信息：seriesName 为空表示当电影处理。 */
     public String seriesName = "";

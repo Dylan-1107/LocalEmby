@@ -91,7 +91,7 @@ internal fun LogPage(p: Palette, onBack: (() -> Unit)? = null) {
                         fontSize = 26.sp,
                         color = p.text,
                         modifier = Modifier
-                            .clickable { onBack() }
+                            .pressable(RoundedCornerShape(50)) { onBack() }
                             .padding(end = 14.dp, top = 2.dp)
                     )
                 }
@@ -102,7 +102,7 @@ internal fun LogPage(p: Palette, onBack: (() -> Unit)? = null) {
                 Box(
                     Modifier
                         .background(p.card, RoundedCornerShape(50))
-                        .clickable {
+                        .pressable(RoundedCornerShape(50)) {
                             val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("log", raw))
                             Toast.makeText(ctx, "日志已复制", Toast.LENGTH_SHORT).show()
@@ -188,7 +188,7 @@ private fun FilterChip(p: Palette, text: String, active: Boolean, onClick: () ->
                 if (active) Blue.copy(alpha = 0.16f) else p.card,
                 RoundedCornerShape(50)
             )
-            .clickable(onClick = onClick)
+            .pressable(RoundedCornerShape(50), onClick)
             .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
         Text(

@@ -39,8 +39,10 @@ public class VideoLibrary {
         if (c == null) {
             synchronized (VideoLibrary.class) {
                 if (cache == null) {
-                    cache = scanAuto(ctx, folderPath);
+                    cache = loadAndReconcile(ctx, folderPath);
                     EpisodeMatcher.enqueue(ctx, cache);
+                    // 视频信息：增量刮削 TMDB 元数据（指纹缓存命中直接跳过）
+                    VideoInfoService.enqueue(ctx, cache, VideoInfoService.MODE_INCREMENTAL);
                 }
                 c = cache;
             }
@@ -48,12 +50,49 @@ public class VideoLibrary {
         return c;
     }
 
-    /** 扫描入口：全盘权限 > SAF 目录授权 > 手动路径/MediaStore。 */
+    /**
+     * 扫描 + 索引 diff（M3 增量）：
+     * 未变化条目时长从索引直读（不再逐个 MediaMetadataRetriever），
+     * 只对新增/变化文件探测时长；消失的条目清理索引与状态。
+     */
+    private static List<Item> loadAndReconcile(Context ctx, String folderPath) {
+        List<Item> scanned = scanAuto(ctx, folderPath);
+        try {
+            LibraryIndex.Result r = LibraryIndex.reconcile(ctx, scanned);
+            if (!r.toProbe.isEmpty()) {
+                for (Item item : r.toProbe) {
+                    item.durationMs = LibraryIndex.probeDuration(item);
+                }
+                LibraryIndex.putAll(ctx, r.toProbe);
+            }
+            EmbyLog.info("library diff: 共 " + scanned.size() + " · 新增/变化 "
+                    + r.toProbe.size() + " · 清理 " + r.removed.size());
+        } catch (Throwable t) {
+            EmbyLog.info("library reconcile error: " + t);
+        }
+        return scanned;
+    }
+
+    /** 扫描入口：全盘权限（指定目录 → 全盘）> SAF 目录授权 > 手动路径/MediaStore。
+     *  全盘权限下优先返回真实文件路径（content:// 之外的 File 路径），
+     *  刮削 NFO/海报落盘、时长探测、抽帧都依赖真实路径。 */
     public static List<Item> scanAuto(Context ctx, String folderPath) {
-        if (hasAllFilesAccess() && (Settings.getTreeUri(ctx) == null || Settings.getTreeUri(ctx).isEmpty())) {
+        if (hasAllFilesAccess()) {
+            String dir = normalize(folderPath);
+            if (dir != null && !dir.isEmpty()) {
+                File d = new File(dir);
+                if (d.isDirectory()) {
+                    List<Item> out = new ArrayList<Item>();
+                    walk(d, out);
+                    sortByName(out);
+                    EmbyLog.info("全盘权限 + 指定目录扫描: " + dir + "，共 " + out.size() + " 部视频");
+                    if (!out.isEmpty()) return out;
+                    EmbyLog.info("指定目录扫描为空，回退全盘扫描");
+                }
+            }
             List<Item> all = scanWholeStorage();
             if (!all.isEmpty()) return all;
-            EmbyLog.info("全盘扫描为空，回退 MediaStore");
+            EmbyLog.info("全盘扫描为空，回退 SAF/MediaStore");
         }
         String tree = Settings.getTreeUri(ctx);
         if (tree != null && !tree.isEmpty()) {
@@ -62,6 +101,15 @@ public class VideoLibrary {
             EmbyLog.info("SAF 扫描为空，回退手动路径/MediaStore");
         }
         return scan(ctx, folderPath);
+    }
+
+    private static void sortByName(List<Item> out) {
+        Collections.sort(out, new Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return String.CASE_INSENSITIVE_ORDER.compare(nz(a.name), nz(b.name));
+            }
+        });
     }
 
     /** 是否已获得「所有文件访问权限」（Android 11+）。 */
@@ -130,7 +178,9 @@ public class VideoLibrary {
                     if (f.length() < 1024) continue; // 跳过空文件/占位文件
                 } catch (Throwable ignored) {
                 }
-                out.add(new Item(f.getAbsolutePath(), stripExt(n), ext(n), f.length(), 0));
+                Item item = new Item(f.getAbsolutePath(), stripExt(n), ext(n), f.length(), 0);
+                item.mtime = f.lastModified();
+                out.add(item);
             }
         }
     }
@@ -213,7 +263,8 @@ public class VideoLibrary {
                     android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                     android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    android.provider.DocumentsContract.Document.COLUMN_SIZE
+                    android.provider.DocumentsContract.Document.COLUMN_SIZE,
+                    android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
             }, null, null, null);
             if (c == null) return;
             while (c.moveToNext()) {
@@ -221,6 +272,7 @@ public class VideoLibrary {
                 String name = c.getString(1);
                 String mime = c.getString(2);
                 long size = c.getLong(3);
+                long mtime = c.getLong(4);
                 if (name == null) continue;
                 if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                     android.net.Uri sub = android.provider.DocumentsContract
@@ -232,6 +284,7 @@ public class VideoLibrary {
                     android.net.Uri doc = android.provider.DocumentsContract
                             .buildDocumentUriUsingTree(tree, docId);
                     Item item = new Item(doc.toString(), stripExt(name), ext(name), size, 0);
+                    item.mtime = mtime;
                     item.setDirectoryContext(parentNames);
                     out.add(item);
                 }
@@ -271,9 +324,11 @@ public class VideoLibrary {
             if (f.isDirectory()) {
                 walk(f, out);
             } else if (f.isFile() && isVideo(f.getName())) {
-                String ext = ext(f.getName());
-                out.add(new Item(f.getAbsolutePath(), stripExt(f.getName()), ext,
-                        f.length(), probeDuration(f.getAbsolutePath())));
+                // 时长由 LibraryIndex diff 决定是否探测，这里只采集
+                Item item = new Item(f.getAbsolutePath(), stripExt(f.getName()), ext(f.getName()),
+                        f.length(), 0);
+                item.mtime = f.lastModified();
+                out.add(item);
             }
         }
     }
@@ -293,7 +348,7 @@ public class VideoLibrary {
                             MediaStore.Video.Media.DATA,
                             MediaStore.Video.Media.DISPLAY_NAME,
                             MediaStore.Video.Media.SIZE,
-                            MediaStore.Video.Media.DURATION
+                            MediaStore.Video.Media.DATE_MODIFIED
                     },
                     null, null, null);
             if (c == null) return;
@@ -307,8 +362,9 @@ public class VideoLibrary {
                 if (name == null || name.isEmpty()) name = new File(data).getName();
                 if (!isVideo(name)) continue;
                 long size = c.getLong(2);
-                long dur = c.getLong(3);
-                out.add(new Item(data, stripExt(name), ext(name), size, dur));
+                Item item = new Item(data, stripExt(name), ext(name), size, 0);
+                item.mtime = c.getLong(3) * 1000L; // DATE_MODIFIED 秒 → 毫秒
+                out.add(item);
             }
         } catch (Throwable t) {
             EmbyLog.info("MediaStore scan failed: " + t);

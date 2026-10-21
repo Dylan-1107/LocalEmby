@@ -7,6 +7,15 @@ build/
 # 本地工具链（JDK / Android SDK，体积约 900MB，按 README 自行准备）
 tools/
 
+# 本地工作目录（WorkBuddy 记忆 / 构建临时文件）
+.tmp/
+.workbuddy/
+.kotlin/
+
+# 逆向分析工作区（第三方 APK 反编译产物与源码 jar，体积大且含第三方代码，不入库）
+HyperLight-analysis/
+hyperlight/
+
 # 签名文件
 *.keystore
 *.jks

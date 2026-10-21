@@ -10,72 +10,165 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Conservative episode binding. Source, identity and file size are part of the cache key. */
+/**
+ * 弹幕剧集绑定（保守策略）。缓存键 = 弹幕源 + 路径 + 大小 + 解析身份。
+ * 任务模式：INCREMENTAL 只处理新增与失败到期重试；RETRY 处理失败/待确认/未命中；FULL 全量（确认过的绑定永不覆盖）。
+ */
 public final class EpisodeMatcher {
+
+    public static final int MODE_INCREMENTAL = 0;
+    public static final int MODE_RETRY = 1;
+    public static final int MODE_FULL = 2;
+
+    /** 失败重试指数退避表（毫秒）：15s → 1min → 5min → 30min → 2h。 */
+    private static final long[] BACKOFF = {15_000L, 60_000L, 300_000L, 1_800_000L, 7_200_000L};
+
     private static final ExecutorService QUEUE = Executors.newSingleThreadExecutor();
     public static volatile String progress = "尚未识别";
-    private static boolean running;
+    /** 结构化进度：UI 进度条读取。 */
+    public static volatile int doneCount;
+    public static volatile int totalCount;
+    public static volatile String currentItem = "";
+    private static volatile boolean cancelRequested;
+    /** 批次是否在跑（UI 进度展示用）。 */
+    public static volatile boolean isActive;
+    /** isActive 时新请求不丢弃：暂存为待跑批次（最新一次覆盖旧的），当前批次结束后执行。 */
+    private static List<Item> pendingItems;
+    private static int pendingMode = MODE_INCREMENTAL;
+
     private EpisodeMatcher() {}
 
     private static SharedPreferences store(Context ctx) {
         return ctx.getSharedPreferences("episode_bindings_v1", Context.MODE_PRIVATE);
     }
+
     private static String fingerprint(Context ctx, Item item) {
-        return DanmuProxy.base(ctx) + "|" + item.path + "|" + item.sizeBytes + "|"
+        return "r1|" + DanmuProxy.base(ctx) + "|" + item.path + "|" + item.sizeBytes + "|"
                 + item.name + "|" + item.seriesName + "|" + item.seasonNumber + "|"
                 + item.seasonExplicit + "|" + item.episodeNumber;
     }
+
     public static JSONObject binding(Context ctx, Item item) {
         try {
             JSONObject value = new JSONObject(store(ctx).getString(item.id, "{}"));
             return fingerprint(ctx, item).equals(value.optString("fingerprint")) ? value : new JSONObject();
         } catch (Exception e) { return new JSONObject(); }
     }
-    public static void enqueue(Context ctx, java.util.List<Item> items) {
-        enqueue(ctx, items, false);
+
+    public static void enqueue(Context ctx, List<Item> items) {
+        enqueue(ctx, items, MODE_INCREMENTAL);
     }
-    public static synchronized void enqueue(Context ctx, java.util.List<Item> items, boolean force) {
-        if (running) return;
-        running = true;
+
+    /** 提交一批识别任务。isActive 时改为暂存待跑批次（最新覆盖），不再静默丢弃。 */
+    public static synchronized void enqueue(Context ctx, List<Item> items, int mode) {
+        if (isActive) {
+            pendingItems = new ArrayList<Item>(items);
+            pendingMode = mode;
+            progress = "识别排队中，当前批次结束后执行…";
+            return;
+        }
+        isActive = true;
+        cancelRequested = false;
         Context app = ctx.getApplicationContext();
-        java.util.List<Item> snapshot = new java.util.ArrayList<Item>(items);
-        QUEUE.execute(() -> {
-            int done = 0, matched = 0, pending = 0, network = 0;
-            try {
-                for (Item item : snapshot) {
-                    if (item.episodeNumber <= 0) continue;
-                    progress = "正在识别：" + item.name;
-                    if (resolve(app, item, force) > 0) matched++;
-                    else if ("network_error".equals(binding(app, item).optString("status"))) network++;
-                    else pending++;
-                    done++;
+        List<Item> snapshot = new ArrayList<Item>(items);
+        int m = mode;
+        QUEUE.execute(() -> runBatch(app, snapshot, m));
+    }
+
+    /** 用户请求取消当前批次。 */
+    public static void cancel() {
+        cancelRequested = true;
+    }
+
+    private static void runBatch(Context app, List<Item> snapshot, int mode) {
+        try {
+            int done = 0, matched = 0, pending = 0, network = 0, skipped = 0;
+            List<Item> work = new ArrayList<Item>();
+            for (Item item : snapshot) {
+                if (item == null || !item.isEpisode() || item.identityAmbiguous) continue;
+                if (shouldProcess(app, item, mode)) work.add(item);
+                else skipped++;
+            }
+            totalCount = work.size();
+            doneCount = 0;
+            currentItem = "";
+            progress = totalCount == 0 ? "没有需要处理的条目（跳过 " + skipped + "）" : "正在识别…";
+            for (Item item : work) {
+                if (cancelRequested) {
+                    progress = "已取消：处理 " + done + "/" + totalCount;
+                    return;
                 }
-                progress = "已处理 " + done + " 集 · 匹配 " + matched + " · 待确认 " + pending + " · 网络失败 " + network;
-            } catch (Exception e) {
-                progress = "识别中断，请重试：" + e.getMessage();
-                EmbyLog.info(progress);
-            } finally { synchronized (EpisodeMatcher.class) { running = false; } }
-        });
+                currentItem = item.name;
+                progress = "正在识别：" + item.name + " (" + (done + 1) + "/" + totalCount + ")";
+                if (resolve(app, item, mode) > 0) matched++;
+                else if ("network_error".equals(binding(app, item).optString("status"))) network++;
+                else pending++;
+                done++;
+                doneCount = done;
+            }
+            progress = "已处理 " + done + " 集 · 匹配 " + matched + " · 待确认 " + pending
+                    + " · 网络失败 " + network + (skipped > 0 ? " · 跳过 " + skipped : "");
+        } catch (Exception e) {
+            progress = "识别中断，请重试：" + e.getMessage();
+            EmbyLog.info(progress);
+        } finally {
+            List<Item> next;
+            int nextMode;
+            synchronized (EpisodeMatcher.class) {
+                isActive = false;
+                next = pendingItems;
+                nextMode = pendingMode;
+                pendingItems = null;
+            }
+            if (next != null) enqueue(app, next, nextMode);
+        }
+    }
+
+    /** 该条目在本批次模式下是否需要处理（决定增量的关键开关）。 */
+    private static boolean shouldProcess(Context ctx, Item item, int mode) {
+        JSONObject old = binding(ctx, item);
+        String status = old.optString("status");
+        boolean bound = old.optInt("episodeId") > 0;
+        if (bound || "confirmed".equals(status)) return false; // 人工确认与已绑定永不重做
+        if (old.length() == 0 || !old.has("fingerprint")) return true; // 新文件
+        boolean failed = "network_error".equals(status) || "error".equals(status);
+        if (mode == MODE_INCREMENTAL) {
+            if (failed) return backoffExpired(old);
+            return false; // needs_confirmation / unmatched 安静等待
+        }
+        if (mode == MODE_RETRY) return failed || "needs_confirmation".equals(status)
+                || "unmatched".equals(status);
+        return true; // FULL：除确认外全量
+    }
+
+    private static boolean backoffExpired(JSONObject old) {
+        long waited = System.currentTimeMillis() - old.optLong("attemptedAt");
+        int attempts = old.optInt("attempts", 0);
+        long limit = BACKOFF[Math.min(attempts, BACKOFF.length - 1)];
+        return waited >= limit;
     }
 
     private static final java.util.concurrent.ConcurrentHashMap<String, Object> LOCKS = new java.util.concurrent.ConcurrentHashMap<>();
-    public static int resolve(Context ctx, Item item, boolean force) {
+    public static int resolve(Context ctx, Item item, int mode) {
         Object lock = LOCKS.computeIfAbsent(item.id, key -> new Object());
-        synchronized (lock) { return resolveLocked(ctx, item, force); }
+        synchronized (lock) { return resolveLocked(ctx, item, mode); }
     }
-    private static int resolveLocked(Context ctx, Item item, boolean force) {
+
+    private static int resolveLocked(Context ctx, Item item, int mode) {
         if (!item.isEpisode() || item.identityAmbiguous) return -1;
         JSONObject old = binding(ctx, item);
-        if (!force && old.optInt("episodeId") > 0) return old.optInt("episodeId");
-        if (!force && System.currentTimeMillis() - old.optLong("attemptedAt")
-                < ("network_error".equals(old.optString("status")) ? 15000L : 300000L)) return -1;
+        if (old.optInt("episodeId") > 0) return old.optInt("episodeId"); // 已绑定/确认
+        if (!shouldProcess(ctx, item, mode)) return -1;
         JSONObject state = new JSONObject();
         try {
             state.put("fingerprint", fingerprint(ctx, item));
             state.put("attemptedAt", System.currentTimeMillis());
+            state.put("attempts", mode == MODE_INCREMENTAL ? old.optInt("attempts", 0) + 1 : 1);
             state.put("status", "unmatched");
             String response = DanmuProxy.post(DanmuProxy.base(ctx) + "/api/v2/match",
                     new JSONObject().put("fileName", DanmuProxy.matchFileName(item)).toString());

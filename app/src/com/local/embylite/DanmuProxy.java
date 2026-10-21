@@ -32,9 +32,9 @@ public class DanmuProxy {
         return s;
     }
 
-    /** 按本地剧集身份匹配，成功绑定跨重启保存。 */
+    /** 按本地剧集身份匹配，成功绑定跨重启保存（增量语义：已绑定/确认直接跳过）。 */
     public static int matchEpisode(android.content.Context ctx, Item item) {
-        return EpisodeMatcher.resolve(ctx, item, false);
+        return EpisodeMatcher.resolve(ctx, item, EpisodeMatcher.MODE_INCREMENTAL);
     }
 
     /** 按文件名匹配剧集，返回 episodeId；失败返回 -1。 */

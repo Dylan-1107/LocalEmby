@@ -12,8 +12,13 @@ public final class Settings {
     private static final String KEY_PORT = "port";
     private static final String KEY_SERVER_ENABLED = "server_enabled";
     private static final String KEY_DANMU_API = "danmu_api";
+    private static final String KEY_TMDB_API = "tmdb_api";
+    private static final String KEY_AUTO_SCRAPE = "auto_scrape";
     private static final String KEY_ROOT_KEEP_ALIVE = "root_keep_alive";
+    private static final String KEY_THEME_MODE = "theme_mode";
     private static final int DEFAULT_PORT = 8096;
+    /** 内置默认 TMDB Key（非商业使用 + 署名，用户可在设置中替换为自己的）。 */
+    private static final String DEFAULT_TMDB_KEY = "2c60f014a303792a0b27a2c4c224d4c5";
 
     private Settings() {
     }
@@ -64,6 +69,24 @@ public final class Settings {
         prefs(ctx).edit().putString(KEY_DANMU_API, url == null ? "" : url.trim()).apply();
     }
 
+    /** TMDB API Key（视频信息刮削用）；默认内置公共 Key，开箱即用，可在设置里替换。 */
+    public static String getTmdbKey(Context ctx) {
+        return prefs(ctx).getString(KEY_TMDB_API, DEFAULT_TMDB_KEY);
+    }
+
+    public static void setTmdbKey(Context ctx, String key) {
+        prefs(ctx).edit().putString(KEY_TMDB_API, key == null ? "" : key.trim()).apply();
+    }
+
+    /** 扫描后自动刮削 TMDB 元数据（默认开启）。 */
+    public static boolean isAutoScrape(Context ctx) {
+        return prefs(ctx).getBoolean(KEY_AUTO_SCRAPE, true);
+    }
+
+    public static void setAutoScrape(Context ctx, boolean enabled) {
+        prefs(ctx).edit().putBoolean(KEY_AUTO_SCRAPE, enabled).apply();
+    }
+
     /** Root 保活是否开启（仅在用户显式开启后才会执行 su 操作）。 */
     public static boolean isRootKeepAlive(Context ctx) {
         return prefs(ctx).getBoolean(KEY_ROOT_KEEP_ALIVE, false);
@@ -71,5 +94,14 @@ public final class Settings {
 
     public static void setRootKeepAlive(Context ctx, boolean enabled) {
         prefs(ctx).edit().putBoolean(KEY_ROOT_KEEP_ALIVE, enabled).apply();
+    }
+
+    /** 外观模式：0 = 跟随系统，1 = 浅色，2 = 深色。 */
+    public static int getThemeMode(Context ctx) {
+        return prefs(ctx).getInt(KEY_THEME_MODE, 0);
+    }
+
+    public static void setThemeMode(Context ctx, int mode) {
+        prefs(ctx).edit().putInt(KEY_THEME_MODE, mode).apply();
     }
 }

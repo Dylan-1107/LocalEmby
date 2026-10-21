@@ -13,18 +13,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -64,12 +56,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import top.yukonga.miuix.kmp.anim.SinOutEasing
-import top.yukonga.miuix.kmp.anim.folmeSpring
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -112,31 +101,43 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val p = if (isSystemInDarkTheme()) DarkPalette else LightPalette
-            HomeScreen(p)
+            HomeScreen()
         }
     }
 }
 
 @Composable
-private fun HomeScreen(p: Palette) {
+private fun HomeScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
+
+    /* 外观：0 = 跟随系统，1 = 浅色，2 = 深色（设置页可切换） */
+    var themeMode by remember { mutableStateOf(Settings.getThemeMode(ctx)) }
+    val dark = when (themeMode) {
+        1 -> false
+        2 -> true
+        else -> isSystemInDarkTheme()
+    }
+    val p = if (dark) DarkPalette else LightPalette
 
     var running by remember { mutableStateOf(HttpService.isServiceRunning) }
     var port by remember { mutableStateOf(Settings.getPort(ctx)) }
     var uptimeMin by remember { mutableStateOf(0L) }
     var count by remember { mutableStateOf(-1) }
-    var treeLabel by remember { mutableStateOf(treeDisplayPath(ctx)) }
+    var treeLabel by remember { mutableStateOf(folderDisplayPath(ctx)) }
     var lanIp by remember { mutableStateOf(lanIpAddress()) }
     var memMb by remember { mutableStateOf(0L) }
     var threads by remember { mutableStateOf(0) }
-    var tab by remember { mutableStateOf(0) }
-    /* 0 = 首页，1 = 弹幕，2 = 日志，3 = 设置（底部导航切换） */
-    var page by remember { mutableStateOf(0) }
+    /* 页面顺序与底部导航一致：0 首页 / 1 弹幕 / 2 日志 / 3 设置。
+     * HorizontalPager 让切页支持手指跟手的左右无缝滑动，点底栏则平滑滚动过去。 */
+    val pagerState = rememberPagerState(initialPage = 0) { 4 }
+    /* 液态玻璃：底栏背景模糊的数据源（捕获页面区绘制内容） */
+    val hazeState = remember { HazeState() }
     var allFiles by remember { mutableStateOf(VideoLibrary.hasAllFilesAccess()) }
     var prevAllFiles by remember { mutableStateOf(allFiles) }
+    /* 有「所有文件访问」权限时用应用内目录浏览器（不受系统 SAF 限制），否则回退系统选择器 */
+    var showFolderPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -198,7 +199,7 @@ private fun HomeScreen(p: Palette) {
                 )
             }
             Settings.setTreeUri(ctx, uri.toString())
-            treeLabel = treeDisplayPath(ctx)
+            treeLabel = folderDisplayPath(ctx)
             VideoLibrary.invalidate()
             scope.launch {
                 count = withContext(Dispatchers.IO) {
@@ -210,72 +211,84 @@ private fun HomeScreen(p: Palette) {
         }
     }
 
+    /* 选目录入口：有全盘权限 → 内置浏览器；否则回退系统 SAF 选择器 */
+    fun pickFolder() {
+        if (VideoLibrary.hasAllFilesAccess()) showFolderPicker = true else picker.launch(null)
+    }
+
+    fun applyPickedFolder(path: String) {
+        showFolderPicker = false
+        Settings.setFolderPath(ctx, path)
+        Settings.setTreeUri(ctx, "") // SAF 授权与手动路径互斥，直接路径优先
+        treeLabel = folderDisplayPath(ctx)
+        VideoLibrary.invalidate()
+        scope.launch {
+            count = withContext(Dispatchers.IO) {
+                runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }
+                    .getOrDefault(-1)
+            }
+            toast(ctx, "已选择目录，共 $count 部")
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(p.bg)) {
 
-        /* ---------- 页面区（带过渡动效） ----------
-         * 用 Miuix 自带的 folmeSpring 做轻微缩放 + SinOutEasing 做水平位移，
-         * 再叠一层淡入淡出，切页是"滑过来"而不是直接刷新。 */
-        AnimatedContent(
-            targetState = page,
-            modifier = Modifier.fillMaxSize(),
-            transitionSpec = {
-                val forward = targetState > initialState
-                // 前进：新页从右边滑入、旧页往左滑出；后退则镜像
-                val slideSpec = tween<IntOffset>(220, easing = SinOutEasing)
-                // 轻微缩放用 Miuix 的 folmeSpring：response 0.9s / damping 0.38（与 Dialog 动效同一套参数）
-                val scaleSpec = folmeSpring<Float>(response = 0.9f, damping = 0.38f)
-
-                val enter: EnterTransition =
-                    fadeIn(tween(160)) + slideInHorizontally(slideSpec) {
-                        if (forward) it else -it
-                    } + scaleIn(scaleSpec, 0.96f)
-                val exit: ExitTransition =
-                    slideOutHorizontally(slideSpec) {
-                        if (forward) -it else it
-                    } + fadeOut(tween(160)) + scaleOut(scaleSpec, 0.96f)
-
-                enter togetherWith exit
-            },
-            label = "page"
-        ) { current ->
-            when (current) {
-                1 -> DanmuScreen(p)
-                2 -> SettingsScreen(
+        /* ---------- 页面区（左右滑动无缝切换） ----------
+         * beyondViewportPageCount = 3：4 个页面全部常驻 composition，
+         * 跨页跳转（如主页→设置）不再中途逐页组装导致掉帧。
+         * hazeSource：捕获页面内容，供底栏做液态玻璃背景模糊。 */
+        Box(Modifier.fillMaxSize().hazeSource(hazeState)) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                beyondViewportPageCount = 3
+            ) { idx ->
+            when (idx) {
+                1 -> VideoInfoScreen(p)
+                2 -> LogPage(p)
+                3 -> SettingsScreen(
                     p = p,
                     port = port,
                     running = running,
                     count = count,
                     treeLabel = treeLabel,
                     allFiles = allFiles,
+                    themeMode = themeMode,
+                    onThemeChanged = { themeMode = it },
                     onPortSaved = { port = it },
                     onTreeLabelChanged = { treeLabel = it },
                     onRescan = { rescan() },
-                    onPickFolder = { picker.launch(null) }
+                    onPickFolder = { pickFolder() }
                 )
-                3 -> LogPage(p)
                 else -> HomeContent(
                     p, scroll, running, uptimeMin, port, lanIp, count, memMb, threads,
                     onToggle = { toggleServer() },
                     onRescan = { rescan() },
-                    onPickFolder = { picker.launch(null) },
-                    onOpenLog = { tab = 2; page = 3 }
+                    onPickFolder = { pickFolder() },
+                    onOpenLog = { scope.launch { pagerState.animateScrollToPage(2) } }
                 )
+            }
             }
         }
 
-        /* ---------- 底部导航：图标在上、小字在下 ---------- */
+        /* ---------- 内置目录选择器（全盘权限下替代系统 SAF） ---------- */
+        if (showFolderPicker) {
+            FolderPickerDialog(
+                p = p,
+                onPick = { applyPickedFolder(it) },
+                onDismiss = { showFolderPicker = false }
+            )
+        }
+
+        /* ---------- 底部导航：纯图标胶囊 + 液态玻璃 ---------- */
         Box(Modifier.align(Alignment.BottomCenter)) {
             AppNavBar(
-                tab = tab,
+                tab = pagerState.currentPage,
                 p = p,
+                haze = hazeState,
                 onSelect = { i ->
-                    if (tab == i) return@AppNavBar
-                    tab = i
-                    page = when (i) {
-                        1 -> 1
-                        2 -> 3
-                        3 -> 2
-                        else -> 0
+                    if (pagerState.currentPage != i) {
+                        scope.launch { pagerState.animateScrollToPage(i) }
                     }
                 }
             )
@@ -304,23 +317,24 @@ private fun HomeContent(
 ) {
     val ctx = LocalContext.current
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(scroll)
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp)
-    ) {
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "Embylite",
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold,
-            color = p.text,
-            letterSpacing = (-0.5).sp
-        )
-        Spacer(Modifier.height(2.dp))
-        Text("本地 Emby 服务器", fontSize = 13.sp, color = p.sub)
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scroll)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp)
+        ) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Embylite",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = p.text,
+                letterSpacing = (-0.5).sp
+            )
+            Spacer(Modifier.height(2.dp))
+            Text("本地 Emby 服务器", fontSize = 13.sp, color = p.sub)
 
         Spacer(Modifier.height(16.dp))
 
@@ -395,6 +409,10 @@ private fun HomeContent(
         }
 
         Spacer(Modifier.height(132.dp))
+        }
+
+        // 下滑时大标题收拢到顶部中间（HYPERLIGHT 风格）
+        CollapsingTitle(title = "Embylite", scroll = scroll, p = p)
     }
 }
 
@@ -466,7 +484,9 @@ private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int, l
                     "Emby · 直连播放",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = p.text
+                    // 运行中卡片是固定的深绿渐变底，标题必须用浅色；
+                    // 停止时才是主题卡片底，跟随 p.text
+                    color = if (running) Color.White else p.text
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
@@ -503,7 +523,7 @@ private fun HeroCard(p: Palette, running: Boolean, uptimeMin: Long, port: Int, l
 @Composable
 private fun ActionCell(text: String, color: Color, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier = modifier.fillMaxSize().clickable(onClick = onClick),
+        modifier = modifier.fillMaxSize().pressable(RoundedCornerShape(14.dp), onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(text, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = color)
@@ -526,7 +546,7 @@ private fun InfoCard(
     Column(
         modifier
             .background(p.card, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .pressable(RoundedCornerShape(18.dp), onClick)
             .padding(16.dp)
     ) {
         Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
@@ -549,7 +569,7 @@ private fun StatCell(
     modifier: Modifier,
     onClick: () -> Unit
 ) {
-    Column(modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier.pressable(RoundedCornerShape(12.dp), onClick), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(label, fontSize = 11.sp, color = p.sub)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -625,7 +645,7 @@ internal fun PillButton(
     Box(
         modifier
             .background(bg, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .pressable(RoundedCornerShape(12.dp), onClick)
             .padding(vertical = 11.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -646,7 +666,10 @@ internal fun toast(ctx: Context, msg: String) {
     Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
 }
 
-private fun treeDisplayPath(ctx: Context): String {
+/** 当前媒体目录的显示文案：手动路径优先，其次 SAF 授权目录，均无则空。 */
+private fun folderDisplayPath(ctx: Context): String {
+    val manual = Settings.getFolderPath(ctx)
+    if (!manual.isNullOrEmpty()) return manual
     val tree = Settings.getTreeUri(ctx)
     if (tree.isNullOrEmpty()) return ""
     return runCatching {

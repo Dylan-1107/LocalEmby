@@ -13,8 +13,8 @@ android {
         applicationId = "com.local.embylite"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "2.6.0"
+        versionCode = 13
+        versionName = "2.8.0"
     }
 
     // 沿用原有目录结构，保持 build.ps1（无 Gradle 手动打包）可用
@@ -72,4 +72,7 @@ dependencies {
 
     // Miuix（HyperOS 风格 UI）
     implementation("top.yukonga.miuix.kmp:miuix:0.8.8")
+    // Haze（液态玻璃背景模糊）：1.2.2 与项目 Compose/AGP 版本匹配；
+    // 1.7.x 会强制拉 Compose 1.12（需 AGP 9.1）导致构建失败
+    implementation("dev.chrisbanes.haze:haze:1.2.2")
 }

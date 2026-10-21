@@ -47,6 +47,8 @@ internal fun SettingsScreen(
     count: Int,
     treeLabel: String,
     allFiles: Boolean,
+    themeMode: Int,
+    onThemeChanged: (Int) -> Unit,
     onPortSaved: (Int) -> Unit,
     onTreeLabelChanged: (String) -> Unit,
     onRescan: () -> Unit,
@@ -62,6 +64,9 @@ internal fun SettingsScreen(
     var editingDanmu by remember { mutableStateOf(false) }
     var danmuDraft by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
 
+    var editingTmdb by remember { mutableStateOf(false) }
+    var tmdbDraft by remember { mutableStateOf(Settings.getTmdbKey(ctx)) }
+
     var rootEnabled by remember { mutableStateOf(Settings.isRootKeepAlive(ctx)) }
     var rootState by remember { mutableStateOf(RootKeepAlive.Status.UNKNOWN) }
     var rootBusy by remember { mutableStateOf(false) }
@@ -73,14 +78,14 @@ internal fun SettingsScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(p.bg)
-            .verticalScroll(scroll)
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp)
-    ) {
+    Box(Modifier.fillMaxSize().background(p.bg)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scroll)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp)
+        ) {
         Spacer(Modifier.height(10.dp))
         Text(
             "设置",
@@ -125,6 +130,7 @@ internal fun SettingsScreen(
                     null, "›"
                 ) {
                     Settings.setTreeUri(ctx, "")
+                    Settings.setFolderPath(ctx, "")
                     onTreeLabelChanged("")
                     VideoLibrary.invalidate()
                     onRescan()
@@ -164,6 +170,37 @@ internal fun SettingsScreen(
                                 toast(ctx, "无法打开权限设置")
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        /* ---------- 外观 ---------- */
+        SettingCard(p) {
+            Text("外观", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf(0 to "跟随系统", 1 to "浅色", 2 to "深色").forEach { (mode, label) ->
+                    val active = themeMode == mode
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .background(
+                                if (active) Blue.copy(alpha = 0.16f) else p.cardAlt,
+                                RoundedCornerShape(12.dp)
+                            )
+                            .pressable(RoundedCornerShape(12.dp)) { onThemeChanged(mode) }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 13.sp,
+                            color = if (active) Blue else p.sub,
+                            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+                        )
                     }
                 }
             }
@@ -329,11 +366,43 @@ internal fun SettingsScreen(
 
         Spacer(Modifier.height(12.dp))
 
+        /* ---------- 视频信息（元数据刮削） ---------- */
+        SettingCard(p) {
+            Text("视频信息", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
+            Spacer(Modifier.height(6.dp))
+            Divider(p)
+            SettingRow(
+                p, "TMDB API Key",
+                "默认已内置公共 Key，可替换为你自己的（themoviedb.org 免费申请）",
+                "已配置",
+                "›"
+            ) { editingTmdb = !editingTmdb }
+            if (editingTmdb) {
+                Spacer(Modifier.height(6.dp))
+                BasicField(p, tmdbDraft) { tmdbDraft = it.trim() }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PillButton("保存", Blue, Modifier.weight(1f)) {
+                        Settings.setTmdbKey(ctx, tmdbDraft)
+                        editingTmdb = false
+                        toast(ctx, if (tmdbDraft.isBlank()) "已清除 TMDB Key" else "已保存，指纹已更新将重新刮削")
+                    }
+                    PillButton("清除", p.cardAlt, Modifier.weight(1f), p.text) {
+                        tmdbDraft = ""
+                        Settings.setTmdbKey(ctx, "")
+                        toast(ctx, "已清除 TMDB Key")
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         /* ---------- 关于 ---------- */
         SettingCard(p) {
             SettingRow(p, "应用名称", "Embylite", null, null)
             Divider(p)
-            SettingRow(p, "版本", "2.6.0 (11)", null, null)
+            SettingRow(p, "版本", "2.7.0 (12)", null, null)
             Divider(p)
             SettingRow(
                 p, "说明",
@@ -343,6 +412,10 @@ internal fun SettingsScreen(
         }
 
         Spacer(Modifier.height(132.dp))
+        }
+
+        // 下滑时大标题收拢到顶部中间（HYPERLIGHT 风格）
+        CollapsingTitle(title = "设置", scroll = scroll, p = p)
     }
 }
 
@@ -378,7 +451,7 @@ private fun SettingRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .let { if (onClick != null) it.pressable(RoundedCornerShape(12.dp), onClick) else it }
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

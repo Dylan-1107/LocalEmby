@@ -13,7 +13,11 @@ class LogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val dark = isSystemInDarkTheme()
+            val dark = when (Settings.getThemeMode(this)) {
+                1 -> false
+                2 -> true
+                else -> isSystemInDarkTheme()
+            }
             LogPage(
                 p = if (dark) DarkPalette else LightPalette,
                 onBack = { finish() }
