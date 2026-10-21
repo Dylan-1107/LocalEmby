@@ -21,39 +21,87 @@ UI 是 Jetpack Compose + Miuix（HyperOS 风格卡片），服务端逻辑是原
 
 ---
 
-## 2. 目录里自带了什么（不用另装 SDK/JDK）
+## 2. 需要自备的工具（`tools/` 没有入仓）
+
+`.gitignore` 排除了 `tools/`（自带 JDK + Android SDK，约 900MB）和 `*.apk`，
+**clone 下来的仓库里没有这两个东西**，需要在新电脑上自行准备。
+
+### 2.1 装 JDK 17
+
+原机器用的是 `Eclipse Temurin 17.0.20.7.1+1`。装任意 JDK 17 都可以，
+装完记住路径，构建时要 `export JAVA_HOME=<路径>`。
+
+### 2.2 装 Android SDK
+
+需要这三样（原机器的版本）：
+
+| 组件 | 版本 |
+|---|---|
+| Platform | `android-36`（compileSdk 36） |
+| Build-tools | `36.0.0`（`aapt2` / `apksigner` 在这里） |
+| Platform-tools | 任意较新版本（提供 `adb`） |
+
+两种装法：
+
+**A. 用 Android SDK Manager（推荐）**：在 `$ANDROID_SDK/cmdline-tools/bin/` 下执行
+```bash
+sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+```
+
+**B. 手动下 zip**：从 https://dl.google.com/android/repository/repository2-3.xml
+找对应 zip 解压到 `$ANDROID_SDK/platforms/` 和 `build-tools/`。
+
+### 2.3 配 `local.properties`
+
+仓库里**没有** `local.properties`（被 .gitignore 排除），要自己建一个，
+`sdk.dir` 指向新机器上的 Android SDK：
+
+```properties
+sdk.dir=C\:/Users/<你>/Android/Sdk
+```
+
+Windows 路径注意转义或直接用正斜杠（`C:/Users/<你>/Android/Sdk` 也可以）。
+
+### 2.4 原机器上的目录长什么样（仅供对照，已不在仓库里）
 
 ```
-embylite/
-  tools/
-    jdk-17.0.20.7.1+1/     # JDK 17，直接用这个
-    sdk/
-      platforms/android-36/   # compileSdk 36
-      build-tools/36.0.0/     # aapt2 / apksigner 在这里
-      platform-tools/         # adb
-  local.properties          # sdk.dir 指向 tools/sdk
-  gradle/wrapper/           # Gradle 8.14.3
+tools/
+  jdk-17.0.20.7.1+1/     # JDK 17
+  sdk/
+    platforms/android-36/
+    build-tools/36.0.0/
+    platform-tools/       # adb
 ```
-
-所以**不需要单独装 JDK、Android SDK**，仓库自带。`local.properties` 里是绝对路径，
-换机器要改。
 
 ---
 
 ## 3. 标准构建命令（重要，有坑）
 
+`<JDK17>` 换成你在 2.1 装的 JDK 路径。
+
 ```bash
-cd /c/Users/11829/LocalEmby-Transfer/embylite
+cd <仓库>/embylite
 
-export JAVA_HOME="$PWD/tools/jdk-17.0.20.1+1"
-export GRADLE_USER_HOME="C:/Users/11829/LocalEmby-Transfer/.gradle-home"
+export JAVA_HOME="<JDK17>"
+export GRADLE_USER_HOME="$HOME/.gradle"     # 用默认位置，别指向仓库外的自定义目录
 
-# 直接用 gradle 发行版里的 gradle，别用 ./gradlew（wrapper 的 .lck 有时被占）
-"$HOME/.gradle/wrapper/dists/gradle-8.14.3-bin/cv11ve7ro1n3o1j4so8xd9n66/gradle-8.14.3/bin/gradle" \
-    --offline assembleRelease
+./gradlew assembleRelease
 ```
 
 产物：`app/build/outputs/apk/release/app-release.apk`
+
+### 关于 `GRADLE_USER_HOME`
+
+原机器用的是 `C:/Users/11829/LocalEmby-Transfer/.gradle-home`（为了缓存离线依赖）。
+**新机器会从 maven 重新下载依赖，第一次构建需要联网，且要花几分钟。**
+如果新机器完全不能联网，可以把原机器的 `.gradle-home/caches` 整个拷过来。
+
+### 关于 `./gradlew`
+
+原机器上 `./gradlew` 偶尔会因为 `gradle-8.14.3-bin.zip.lck` 被占而失败，当时是绕过 wrapper
+直接调用发行目录里的 `gradle`。新机器如果遇到同样问题，两个办法：
+删掉 `~/.gradle/wrapper/dists/gradle-8.14.3-bin/*/*.lck`，或者直接跑
+`~/.gradle/wrapper/dists/gradle-8.14.3-bin/*/gradle-8.14.3/bin/gradle assembleRelease`。
 
 ### 三条铁律
 
@@ -62,21 +110,23 @@ export GRADLE_USER_HOME="C:/Users/11829/LocalEmby-Transfer/.gradle-home"
    直接失败，报的是误导性的 `The server may not support the client's requested TLS protocol
    versions` / `Remote host terminated the handshake`。**网络本身是通的**，别被这条错误带偏去查 TLS。
 
-2. **`gradle.properties` 里必须有 `-Djava.io.tmpdir`**。
-   这台机器的沙箱**禁止 JVM 在 `%LOCALAPPDATA%\Temp` 创建新文件**（`RandomAccessFile` 被拒），
+2. **如果构建报 `.alive` / `AccessDeniedException`，是 `java.io.tmpdir` 的问题**。
+   原机器的沙箱**禁止 JVM 在 `%LOCALAPPDATA%\Temp` 创建新文件**（`RandomAccessFile` 被拒），
    Kotlin 编译器会间歇性报：
    ```
    java.nio.file.AccessDeniedException: ...\Temp\kotlin-compiler-in-mbylite-18105....alive
    ```
-   已通过 `gradle.properties` 修复：
+   原机器的修法是在 `gradle.properties` 里指一个工作区内的目录：
    ```properties
-   org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8 -Djava.io.tmpdir=C:/Users/11829/LocalEmby-Transfer/.tmp/ktmp
+   org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8 -Djava.io.tmpdir=<仓库>/../.tmp/ktmp
    ```
-   **换电脑如果不再有沙箱限制，这行可以去掉；但如果又报 `.alive` / AccessDenied，就是这个原因。**
+   **新电脑如果没这类沙箱限制，这行可以不加；但如果又报 `.alive` / AccessDenied，
+   就是这个原因，照上面加一行即可。**
+   ⚠️ 只加在 `gradle.properties`，**不要**加进 `GRADLE_OPTS`（见铁律 1）。
 
-3. **不需要联网**。所有依赖（Miuix、AGP、Compose、OkHttp）都已在
-   `C:\Users\11829\LocalEmby-Transfer\.gradle-home\caches` 里，所以用 `--offline`。
-   如果要加新依赖，去掉 `--offline` 让它下载（命令见上，别设 GRADLE_OPTS）。
+3. **第一次构建要联网**。依赖会从 maven 下载，需要几分钟。
+   原机器当时用的是 `--offline`，因为 `.gradle-home/caches` 里已经缓存了全部依赖——
+   那是机器状态，不是仓库状态。
 
 ### 关于 Kotlin daemon 的一条无害告警
 
@@ -94,7 +144,7 @@ AccessDeniedException: C:\Users\11829\AppData\Local\kotlin\daemon\kotlin-daemon-
 剧集解析和候选校验是纯 Java 逻辑，不依赖设备。**改了任何 `SxxExx` / `第N集` / 命名规则后先跑这个**：
 
 ```bash
-export JAVA_HOME="$PWD/tools/jdk-17.0.20.1+1"; export PATH="$JAVA_HOME/bin:$PATH"
+export JAVA_HOME="<JDK17>"; export PATH="$JAVA_HOME/bin:$PATH"
 javac -encoding UTF-8 -d build/regress \
   app/src/com/local/embylite/EpisodeIdentity.java \
   app/src/com/local/embylite/EpisodeMatchPolicy.java \
@@ -104,14 +154,18 @@ java -cp build/regress com.local.embylite.EpisodeRegression
 # 期望：PASS 38 episode identity and candidate regression cases
 ```
 
+这条**不需要 Android SDK**，只要 JDK 17。
+
 ---
 
 ## 5. 装机与调试
 
-```bash
-ADB="$PWD/tools/sdk/platform-tools/adb.exe"
+`adb` 用你自己装的 Android SDK 里的 platform-tools（`$ANDROID_SDK/platform-tools/adb`）：
 
-"$ADB" devices                                   # ee8617da = 这台机上的 Xiaomi 17
+```bash
+ADB="$ANDROID_SDK/platform-tools/adb"
+
+"$ADB" devices
 "$ADB" install -r app/build/outputs/apk/release/app-release.apk
 "$ADB" shell am force-stop com.local.embylite
 "$ADB" shell am start -n com.local.embylite/.MainActivity
@@ -123,12 +177,13 @@ ADB="$PWD/tools/sdk/platform-tools/adb.exe"
 "$ADB" shell "curl -s -m 15 'http://127.0.0.1:8096/api/danmu/<itemId>?option=GetJsonById'"
 
 # APK 元数据（验证 label / versionCode）
-"$PWD/tools/sdk/build-tools/36.0.0/aapt2.exe" dump badging app/build/outputs/apk/release/app-release.apk
+$ANDROID_SDK/build-tools/36.0.0/aapt2 dump badging app/build/outputs/apk/release/app-release.apk
 ```
 
-被测设备：Xiaomi 17，Android 17 (API 37)，屏幕 1220x2656。
+原被测设备：Xiaomi 17，Android 17 (API 37)，屏幕 1220x2656。
+**换设备后下面这两个坐标会不准**，请重新用 `uiautomator dump` 取。
 
-**点击坐标**（adb input tap，这台设备的物理像素）：
+**原设备上的点击坐标**（adb input tap，物理像素，仅供参考）：
 - 底部导航四项：首页 (328,2471) · 弹幕 (516,2471) · 日志 (704,2471) · 设置 (892,2471)
 
 **取 UI 元素真实坐标**（比猜坐标靠谱）：
@@ -143,7 +198,7 @@ MSYS_NO_PATHCONV=1 "$ADB" exec-out cat /data/local/tmp/ui.xml > /tmp/ui.xml
 ## 6. 跑 Gradle 依赖检查（可选）
 
 ```bash
-"$HOME/.gradle/.../gradle" -p app dependencies --configuration releaseRuntimeClasspath
+./gradlew -p app dependencies --configuration releaseRuntimeClasspath
 ```
 注意配置名要在 `:app` 子项目上，根项目没有这个 configuration。
 
@@ -212,8 +267,11 @@ push 前确认 `gh auth status` 正常（当前账号 Dylan-1107，token scope �
 
 ## 11. 换机器检查清单
 
-- [ ] 改 `local.properties` 里的 `sdk.dir`（绝对路径，指向新机器上的 `embylite/tools/sdk`）
-- [ ] 改 `gradle.properties` 里的 `-Djava.io.tmpdir`（如果新机器也有 JVM 不能写 Temp 的问题）
-- [ ] 第一次构建去掉 `--offline`，让依赖下全（或把 `.gradle-home/caches` 拷过去）
+- [ ] 装 JDK 17，记下路径（构建时要 `export JAVA_HOME`）
+- [ ] 装 Android SDK：platform `android-36` + build-tools `36.0.0` + platform-tools
+- [ ] 新建 `local.properties`，`sdk.dir` 指向新机器的 SDK（仓库里没有这个文件）
+- [ ] 第一次构建**联网**（别加 `--offline`），让它把依赖下全，需要几分钟
+- [ ] 如果报 `.alive` / `AccessDeniedException`，按铁律 2 加 `-Djava.io.tmpdir`
 - [ ] 跑一遍第 4 节的回归测试，确认输出 `PASS 38`
 - [ ] 装机跑一遍，重点看第 8 节那三条未验证项
+- [ ] 换设备后重新用 `uiautomator dump` 取点击坐标，别沿用旧坐标
