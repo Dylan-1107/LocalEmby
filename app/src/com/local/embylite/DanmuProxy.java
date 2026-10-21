@@ -100,7 +100,7 @@ public class DanmuProxy {
             c.setReadTimeout(12000);
             c.setRequestMethod("GET");
             c.setRequestProperty("Accept", "application/json");
-            c.setRequestProperty("User-Agent", "LocalEmby/1.0");
+            c.setRequestProperty("User-Agent", "Embylite/2.6.0");
             int status = c.getResponseCode();
             if (status / 100 != 2) {
                 EmbyLog.info("danmu upstream HTTP " + status);
@@ -130,7 +130,7 @@ public class DanmuProxy {
             c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             c.setRequestProperty("Accept", "application/json");
-            c.setRequestProperty("User-Agent", "LocalEmby/1.0");
+            c.setRequestProperty("User-Agent", "Embylite/2.6.0");
             c.setFixedLengthStreamingMode(data.length);
             OutputStream os = c.getOutputStream();
             try {

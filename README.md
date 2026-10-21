@@ -1,8 +1,12 @@
-# LocalEmby（本地影院）
+# Embylite（原 LocalEmby）
 
 [![release](https://img.shields.io/github/v/release/Dylan-1107/LocalEmby?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest)
 [![download](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3482FF?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk)
 ![minSdk](https://img.shields.io/badge/minSdk-26-30D158?style=flat-square)
+
+> **更名说明**：本项目原名 **LocalEmby（本地影院）**，自 2.6.0 起统一更名为 **Embylite**。
+> 为不影响老用户升级，**包名仍保留 `com.local.embylite`**（Android 以包名识别应用，改包名会导致新旧版本无法覆盖安装、且已保存的设置与播放进度丢失），因此桌面图标名称显示为 Embylite，而系统内部标识依旧是 `com.local.embylite`。
+> GitHub 仓库与历史 Release 仍沿用原地址 `github.com/Dylan-1107/LocalEmby`，上方下载链接不受影响。
 
 ## 下载安装
 
@@ -12,13 +16,23 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
 
 历史版本见 [Releases](https://github.com/Dylan-1107/LocalEmby/releases)。
 
-装好后打开 App → 授权视频目录（选择文件夹或授予全部文件访问）→ 启动服务器。与手机同一 Wi-Fi 的设备，请在 Emby 客户端添加 App 显示的“局域网”地址（例如 `http://192.168.1.23:8096`）；只有本机客户端使用 `http://127.0.0.1:8096`，用户名密码随意填。
+装好后打开 Embylite → 授权视频目录（选择文件夹或授予全部文件访问）→ 启动服务器。与手机同一 Wi-Fi 的设备，请在 Emby 客户端添加 App 显示的“局域网”地址（例如 `http://192.168.1.23:8096`）；只有本机客户端使用 `http://127.0.0.1:8096`，用户名密码随意填。
 
 ## 界面
 
-| 首页 | 请求日志 |
+底部导航分为四项：**首页**、**弹幕**、**日志**、**设置**。
+
+- **首页**：只保留服务器状态、访问地址、启停/复制/刷新、服务数值与运行指标
+- **弹幕**：独立一页，固定头部（识别进度 + 已绑定/待处理/失败统计 + 筛选页签），下方是独立滚动的结果列表，不再是整条长滚动
+- **设置**：媒体目录、服务端口、开机自启、Root 保活、弹幕源
+
+| 首页 | 弹幕识别 |
 | --- | --- |
-| ![首页](docs/screenshot-home.png) | ![日志](docs/screenshot-log.png) |
+| ![首页](docs/screenshot-home.png) | ![弹幕](docs/screenshot-danmu.png) |
+
+| 设置 | 请求日志 |
+| --- | --- |
+| ![设置](docs/screenshot-settings.png) | ![日志](docs/screenshot-log.png) |
 
 把手机里的本地视频目录，变成一个**支持本机和局域网访问的 Emby 服务器**。装好之后，本机客户端添加 `http://127.0.0.1:8096`，同一 Wi-Fi 的其他设备添加 App 显示的局域网地址，就能像浏览真 Emby 一样浏览、播放本地视频，并且**播放进度会记忆、可续播**，还支持**自动匹配弹幕**。
 
@@ -26,7 +40,7 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
 
 ## 功能
 
-- **HyperOS 风格界面**：基于 [Miuix](https://github.com/compose-miuix-ui/miuix)（Compose Multiplatform UI 库）重写，卡片式布局、系统级观感
+- **HyperOS 风格界面**：基于 [Miuix](https://github.com/compose-miuix-ui/miuix)（Compose Multiplatform UI 库）重写，卡片式布局、系统级观感；底部导航切换首页 / 弹幕 / 日志 / 设置，弹幕识别与设置各自独立成页
 
 - **本地目录即媒体库**，两种授权方式：
   - **选择文件夹（SAF）**：逐个目录授权，可持久化、不需要危险权限；Android 11+ 系统不允许选存储根目录，所以只能选具体文件夹
@@ -36,10 +50,11 @@ https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk
 - **剧集识别**：结合**父目录名与文件名**解析「剧名 / 季 / 集」（`SxxExx`、`第N集`、`EPxx`、纯数字等），区分「明确季」「未分季」「特别篇」，并把多集合并、上下篇等文件标记为**命名有歧义**，不参与自动绑定
 - **剧集结构浏览**：Emby 客户端里按「剧集 → 季 → 集」层级浏览（`/shows/{id}/Episodes`、`/shows/nextup`、`/items`），不再把所有文件摊平成电影
 - **自动弹幕**：客户端请求 `/api/danmu/{itemId}` 时，按**剧集身份**（剧名 + 季 + 集）匹配弹弹play 兼容弹幕源，并对候选做二次校验，避免错绑同名剧集；绑定结果带指纹缓存（弹幕源 / 路径 / 大小 / 身份），文件或配置变化会自动失效重识
-- **识别结果可视化**：首页「剧集与弹幕识别」卡片显示识别进度、每个文件的绑定状态（已绑定 / 命名有歧义 / 待确认候选 / 未找到匹配 / 网络失败），候选可一键确认，失败可重新识别
+- **识别结果可视化**：「弹幕」页顶部固定显示识别进度与已绑定 / 待处理 / 失败统计，可按状态筛选；列表项展开可查看详情并一键确认候选
 - **刮削元数据**：支持通过 `/api/dev/metadata` 注入标题、简介、年份、评分、演职人员、海报
 - **后台常驻**：前台服务 + WakeLock + 开机自启（仅在你主动开启过服务器时恢复）
-- **请求日志**：App 内可查看全部请求，便于排查客户端兼容问题
+- **Root 保活（可选）**：设备已 root 时，可在「设置」页开启；开启后每次启动服务器会用 `su` 把本应用加入电池优化白名单、解除后台限制并拉起前台服务，降低被 ROM 杀后台的概率。**未 root 或拒绝授权时自动跳过，不影响正常使用**；也可随时手动触发一次
+- **请求日志**：App 内可查看全部请求（底部「日志」页），便于排查客户端兼容问题
 
 ## 目录结构
 
@@ -48,6 +63,13 @@ app/
   src/
     AndroidManifest.xml
     com/local/embylite/
+      # ---- Compose UI（沿用原有卡片样式）----
+      MainActivity.kt       # 导航壳 + 首页内容（HomeContent）+ 底部导航
+      DanmuPage.kt          # 弹幕页：固定头部（进度/统计/筛选）+ 独立滚动结果列表
+      SettingsPage.kt       # 设置页：媒体目录、端口、开机自启、Root 保活、弹幕源
+      LogActivity.kt        # 请求日志页
+
+      # ---- 服务端逻辑（Java）----
       EmbyHttpServer.java   # 原生 HTTP 服务器：路由、Range 流媒体、弹幕/元数据接口
       EmbyApi.java          # Emby 协议层：System/Users/Items/PlaybackInfo/Sessions 等
       VideoLibrary.java     # 媒体库扫描（SAF / MediaStore / 目录遍历）
@@ -60,15 +82,15 @@ app/
       MetadataStore.java    # 刮削元数据覆盖层
       DanmuProxy.java       # 弹幕源代理（match + comment）
       ThumbProvider.java    # 视频抽帧缩略图 / 占位图
+      RootKeepAlive.java    # Root 保活：su 白名单 + 解除后台限制（可选，需用户显式开启）
       HttpService.java      # 前台服务
-      MainActivity.kt       # 主界面（Miuix/Compose）：启停、地址复制、目录选择、端口、弹幕源
-      LogActivity.java      # 请求日志
       Settings.java         # 偏好设置
       BootReceiver.java     # 开机恢复
-    res/                    # 布局与资源
+    res/                    # 布局与资源（strings.xml 中 app_name = Embylite）
   assets/web/index.html     # 浏览器调试页（列表 + 播放 + 进度上报）
 tests/
   EpisodeRegression.java    # 剧集解析 / 候选校验回归测试（纯 Java，无需设备）
+docs/                       # README 截图
 ```
 
 ## 构建
@@ -86,7 +108,7 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 签名默认使用仓库根目录的 `debug.keystore`（`signingConfigs.local`），正式发布请替换为你自己的密钥。
 
-技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36。
+技术栈：AGP 8.13.2 · Kotlin 2.3.20 · Compose Multiplatform 1.10.3 · Miuix 0.8.8 · minSdk 26 / targetSdk 36 · **版本 2.6.0（versionCode 11）**。
 
 ### 剧集解析回归测试
 
@@ -104,11 +126,12 @@ java -cp build/regress com.local.embylite.EpisodeRegression
 
 ## 使用
 
-1. 安装 APK，打开「本地影院」
-2. 点「选择文件夹」授权视频目录（或用输入框手填路径，支持 `/sdcard/xxx` 写法）
-3. 点「启动服务器」，界面会显示本机地址和局域网地址（点「复制」会复制局域网地址）
+1. 安装 APK，打开「Embylite」
+2. 在首页点「视频目录」卡片，选择文件夹授权视频目录（也可授予「所有文件访问权限」直接扫全盘）
+3. 点「启动」，界面会显示本机地址和局域网地址（点「复制」会复制局域网地址）
 4. 在同一 Wi-Fi 的 Emby 客户端里添加服务器：填写界面显示的局域网地址，例如 `http://192.168.1.23:8096`；如果客户端就在手机本机，再填写 `http://127.0.0.1:8096`。用户名密码随意填
-5. 浏览播放即可，进度自动记忆
+5. 点底部「弹幕」进入弹幕识别页，可查看识别进度、逐文件绑定状态并确认候选
+6. 浏览播放即可，进度自动记忆
 
 局域网内其他设备也可以访问 `http://<手机IP>:8096`（同 WiFi）。
 
@@ -126,7 +149,7 @@ GET  {base}/api/v2/comment/{id}  ?withRelated=true    → {count, comments:[{p,m
 - **明确季**的文件（`S02E03`、`第二季第3集`）必须有季证据才能绑定，避免第二季被绑到第一季
 - **未分季**的文件只会绑定到同样未分季的候选；**特别篇**（`S00`）不会绑到正片
 - **命名有歧义**的文件（`S01E01-E02` 合集、上下篇等）不参与自动绑定，需拆分后重识
-- 绑定结果按「弹幕源 + 路径 + 大小 + 解析身份」生成指纹缓存，任一变化即失效重识；首页卡片可查看进度、确认候选、重新识别
+- 绑定结果按「弹幕源 + 路径 + 大小 + 解析身份」生成指纹缓存，任一变化即失效重识；「弹幕」页可查看进度、确认候选、重新识别
 
 弹幕源地址在 `Settings.getDanmuApi()` 中配置（默认值见 `DanmuProxy.DEFAULT_API`，可自行替换为你部署的弹弹play 兼容服务）。网络层（`DanmuNetwork`）在系统 DNS 失败时走 DoH 兜底，同时保留原始主机名、SNI 与证书校验。
 

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LocalEmby"
+rootProject.name = "Embylite"
 include(":app")

@@ -13,6 +13,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,7 +37,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
@@ -53,21 +64,24 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import top.yukonga.miuix.kmp.anim.SinOutEasing
+import top.yukonga.miuix.kmp.anim.folmeSpring
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /* ---------------- 配色 ---------------- */
-private val Blue = Color(0xFF4C9AFF)
-private val Red = Color(0xFFFF453A)
-private val Orange = Color(0xFFFF9F0A)
-private val Green = Color(0xFF30D158)
+internal val Blue = Color(0xFF4C9AFF)
+internal val Red = Color(0xFFFF453A)
+internal val Orange = Color(0xFFFF9F0A)
+internal val Green = Color(0xFF30D158)
 
-private data class Palette(
+internal data class Palette(
     val bg: Color,
     val card: Color,
     val cardAlt: Color,
@@ -76,7 +90,7 @@ private data class Palette(
     val divider: Color,
 )
 
-private val DarkPalette = Palette(
+internal val DarkPalette = Palette(
     bg = Color(0xFF000000),
     card = Color(0xFF1C1C1E),
     cardAlt = Color(0xFF232326),
@@ -85,7 +99,7 @@ private val DarkPalette = Palette(
     divider = Color(0xFF2C2C2E),
 )
 
-private val LightPalette = Palette(
+internal val LightPalette = Palette(
     bg = Color(0xFFF2F2F7),
     card = Color(0xFFFFFFFF),
     cardAlt = Color(0xFFF7F7FA),
@@ -119,21 +133,14 @@ private fun HomeScreen(p: Palette) {
     var memMb by remember { mutableStateOf(0L) }
     var threads by remember { mutableStateOf(0) }
     var tab by remember { mutableStateOf(0) }
-    var editingPort by remember { mutableStateOf(false) }
-    var portDraft by remember { mutableStateOf(port.toString()) }
-    var editingDanmu by remember { mutableStateOf(false) }
-    var danmuDraft by remember { mutableStateOf(Settings.getDanmuApi(ctx)) }
-    var autoStart by remember { mutableStateOf(Settings.isServerEnabled(ctx)) }
+    /* 0 = 首页，1 = 弹幕，2 = 日志，3 = 设置（底部导航切换） */
+    var page by remember { mutableStateOf(0) }
     var allFiles by remember { mutableStateOf(VideoLibrary.hasAllFilesAccess()) }
     var prevAllFiles by remember { mutableStateOf(allFiles) }
-    var episodeProgress by remember { mutableStateOf(EpisodeMatcher.progress) }
-    var showMatches by remember { mutableStateOf(false) }
-    var episodeItems by remember { mutableStateOf(emptyList<Item>()) }
 
     LaunchedEffect(Unit) {
         while (true) {
             running = HttpService.isServiceRunning
-            episodeProgress = EpisodeMatcher.progress
             port = Settings.getPort(ctx)
             uptimeMin = if (running && HttpService.startedAt > 0)
                 (System.currentTimeMillis() - HttpService.startedAt) / 60000 else 0
@@ -175,8 +182,11 @@ private fun HomeScreen(p: Palette) {
             Settings.setServerEnabled(ctx, true)
             val i = Intent(ctx, HttpService::class.java)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            // 开启过 Root 保活的话，每次启动服务器顺手执行一次
+            if (Settings.isRootKeepAlive(ctx)) {
+                scope.launch(Dispatchers.IO) { runCatching { RootKeepAlive.apply(ctx) } }
+            }
         }
-        autoStart = Settings.isServerEnabled(ctx)
         running = HttpService.isServiceRunning
     }
 
@@ -201,367 +211,197 @@ private fun HomeScreen(p: Palette) {
     }
 
     Box(Modifier.fillMaxSize().background(p.bg)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(scroll)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp)
-        ) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "本地影院",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = p.text,
-                letterSpacing = (-0.5).sp
-            )
-            Spacer(Modifier.height(2.dp))
-            Text("本地 Emby 服务器", fontSize = 13.sp, color = p.sub)
 
-            Spacer(Modifier.height(16.dp))
+        /* ---------- 页面区（带过渡动效） ----------
+         * 用 Miuix 自带的 folmeSpring 做轻微缩放 + SinOutEasing 做水平位移，
+         * 再叠一层淡入淡出，切页是"滑过来"而不是直接刷新。 */
+        AnimatedContent(
+            targetState = page,
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = {
+                val forward = targetState > initialState
+                // 前进：新页从右边滑入、旧页往左滑出；后退则镜像
+                val slideSpec = tween<IntOffset>(220, easing = SinOutEasing)
+                // 轻微缩放用 Miuix 的 folmeSpring：response 0.9s / damping 0.38（与 Dialog 动效同一套参数）
+                val scaleSpec = folmeSpring<Float>(response = 0.9f, damping = 0.38f)
 
-            HeroCard(p, running, uptimeMin, port, lanIp)
+                val enter: EnterTransition =
+                    fadeIn(tween(160)) + slideInHorizontally(slideSpec) {
+                        if (forward) it else -it
+                    } + scaleIn(scaleSpec, 0.96f)
+                val exit: ExitTransition =
+                    slideOutHorizontally(slideSpec) {
+                        if (forward) -it else it
+                    } + fadeOut(tween(160)) + scaleOut(scaleSpec, 0.96f)
 
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(p.card, RoundedCornerShape(18.dp))
-                    .height(56.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ActionCell(if (running) "停止" else "启动", if (running) Red else Blue, Modifier.weight(1f)) {
-                    toggleServer()
-                }
-                VDivider(p)
-                ActionCell("复制", Blue, Modifier.weight(1f)) {
-                    val ip = lanIp
-                    if (ip != null) copy(ctx, "http://$ip:$port")
-                    else toast(ctx, "未获取到局域网地址，请连接 Wi-Fi")
-                }
-                VDivider(p)
-                ActionCell("刷新", Orange, Modifier.weight(1f)) { rescan() }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                InfoCard(p, "媒体库", if (count < 0) "统计中" else "$count 部视频", Modifier.weight(1f)) {
-                    picker.launch(null)
-                }
-                InfoCard(p, "日志", "查看请求记录", Modifier.weight(1f)) {
-                    ctx.startActivity(Intent(ctx, LogActivity::class.java))
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Column(
-                Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("服务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
-                    Spacer(Modifier.weight(1f))
-                    Text("点击数值可复制", fontSize = 11.sp, color = p.sub)
-                }
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth()) {
-                    StatCell(p, "端口", port.toString(), Modifier.weight(1f)) {
-                        copy(ctx, port.toString())
-                    }
-                    StatCell(p, "本机", "127.0.0.1", Modifier.weight(1f)) {
-                        copy(ctx, "http://127.0.0.1:$port")
-                    }
-                    StatCell(p, "局域网", lanIp ?: "无", Modifier.weight(1f)) {
-                        val ip = lanIp
-                        if (ip != null) copy(ctx, "http://$ip:$port")
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                InfoCard(
-                    p, "视频目录",
-                    when {
-                        treeLabel.isNotEmpty() -> treeLabel
-                        allFiles -> "全盘（全部文件）"
-                        else -> "未授权"
-                    },
-                    Modifier.weight(1f)
-                ) { picker.launch(null) }
-                InfoCard(p, "弹幕源", if (danmuDraft.isBlank()) "内置默认" else "自定义", Modifier.weight(1f)) {
-                    editingDanmu = !editingDanmu
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Column(Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)) {
-                Text("剧集与弹幕识别", fontSize = 15.sp, color = p.text)
-                Text(episodeProgress, fontSize = 11.sp, color = p.sub)
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PillButton("重新识别", Blue, Modifier.weight(1f)) {
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                EpisodeMatcher.enqueue(ctx, VideoLibrary.get(ctx, Settings.getFolderPath(ctx)), true)
-                            }
-                        }
-                    }
-                    PillButton("查看结果", p.cardAlt, Modifier.weight(1f)) {
-                        scope.launch {
-                            episodeItems = withContext(Dispatchers.IO) {
-                                VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).filter { it.episodeNumber > 0 }
-                            }
-                            showMatches = !showMatches
-                        }
-                    }
-                }
-                if (showMatches) {
-                    episodeItems.forEach { item ->
-                        val result = EpisodeMatcher.binding(ctx, item)
-                        val matched = result.optInt("episodeId") > 0
-                        Spacer(Modifier.height(10.dp))
-                        Text(item.name, fontSize = 13.sp, color = p.text)
-                        val local = if (item.seasonExplicit) "第${item.seasonNumber}季 · 第${item.episodeNumber}集"
-                                    else "季未知 · 第${item.episodeNumber}集"
-                        val stateLabel = when {
-                            matched -> "已绑定"
-                            item.identityAmbiguous -> "命名有歧义"
-                            result.optString("status") == "network_error" -> "网络失败，请重试"
-                            result.optString("status") == "needs_confirmation" -> "待确认候选"
-                            result.optString("status") == "unmatched" -> "未找到匹配"
-                            else -> "等待识别"
-                        }
-                        Text("$local · $stateLabel", fontSize = 11.sp,
-                            color = if (matched) Green else Orange)
-                        if (matched) Text(result.optString("episodeTitle"), fontSize = 11.sp, color = p.sub)
-                        if (result.optString("status") == "network_error") {
-                            Text(result.optString("error", "连接未成功，请重新识别"), fontSize = 11.sp, color = p.sub)
-                        }
-                        if (item.identityAmbiguous) {
-                            Text("多集或上下篇文件，请拆分后识别", fontSize = 11.sp, color = Orange)
-                        } else if (!matched) {
-                            val candidates = result.optJSONArray("candidates")
-                            if (candidates != null) for (i in 0 until candidates.length()) {
-                                val candidate = candidates.optJSONObject(i) ?: continue
-                                val candidateId = candidate.optInt("episodeId", -1)
-                                if (candidateId > 0) {
-                                    Text("确认：" + candidate.optString("animeTitle") + " / " + candidate.optString("episodeTitle"),
-                                        fontSize = 12.sp, color = Blue,
-                                        modifier = Modifier.fillMaxWidth().clickable {
-                                            scope.launch {
-                                                val ok = withContext(Dispatchers.IO) { EpisodeMatcher.confirm(ctx, item, candidateId) }
-                                                toast(ctx, if (ok) "已确认绑定" else "绑定失败，请重新识别")
-                                                episodeProgress = EpisodeMatcher.progress + " "
-                                            }
-                                        }.padding(vertical = 8.dp))
-                                }
-                            }
-                        }
-                    }
-                    if (episodeItems.isEmpty()) Text("尚无可解析的剧集文件", fontSize = 12.sp, color = p.sub)
-                }
-            }
-
-            if (treeLabel.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(p.card, RoundedCornerShape(18.dp))
-                        .clickable {
-                            Settings.setTreeUri(ctx, "")
-                            treeLabel = ""
-                            VideoLibrary.invalidate()
-                            rescan()
-                        }
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("改用全盘扫描", fontSize = 15.sp, color = p.text)
-                        Text(
-                            if (allFiles) "清除当前文件夹选择，扫描整台手机"
-                            else "需要先授予「所有文件访问权限」",
-                            fontSize = 11.sp,
-                            color = p.sub
-                        )
-                    }
-                    Text("›", fontSize = 16.sp, color = p.sub)
-                }
-            }
-
-            if (!allFiles) {
-                Spacer(Modifier.height(12.dp))
-                Column(
-                    Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("免选文件夹", fontSize = 15.sp, color = p.text)
-                            Text(
-                                "授予「所有文件访问权限」后直接扫全盘，无需逐个选目录",
-                                fontSize = 11.sp,
-                                color = p.sub
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        PillButton("去授权", Blue, Modifier.width(92.dp)) {
-                            try {
-                                ctx.startActivity(
-                                    Intent(
-                                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                        Uri.parse("package:" + ctx.packageName)
-                                    )
-                                )
-                            } catch (e: Throwable) {
-                                try {
-                                    ctx.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                                } catch (e2: Throwable) {
-                                    toast(ctx, "无法打开权限设置")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (editingDanmu) {
-                Spacer(Modifier.height(12.dp))
-                Column(
-                    Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
-                ) {
-                    Text("弹幕 API 地址", fontSize = 13.sp, color = p.sub)
-                    Spacer(Modifier.height(8.dp))
-                    BasicField(p, danmuDraft) { danmuDraft = it }
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        PillButton("保存", Blue, Modifier.weight(1f)) {
-                            Settings.setDanmuApi(ctx, danmuDraft)
-                            editingDanmu = false
-                            toast(ctx, "已保存")
-                        }
-                        PillButton("恢复默认", p.cardAlt, Modifier.weight(1f)) {
-                            danmuDraft = ""
-                            Settings.setDanmuApi(ctx, "")
-                            toast(ctx, "已恢复内置弹幕源")
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ProgressCard(p, "媒体库数量", count.coerceAtLeast(0), 200, Modifier.weight(1f))
-                ProgressCard(
-                    p, "内存占用", memMb.toInt(), 512, Modifier.weight(1f),
-                    suffix = "MB", extraLabel = "线程", extraValue = threads.toString()
+                enter togetherWith exit
+            },
+            label = "page"
+        ) { current ->
+            when (current) {
+                1 -> DanmuScreen(p)
+                2 -> SettingsScreen(
+                    p = p,
+                    port = port,
+                    running = running,
+                    count = count,
+                    treeLabel = treeLabel,
+                    allFiles = allFiles,
+                    onPortSaved = { port = it },
+                    onTreeLabelChanged = { treeLabel = it },
+                    onRescan = { rescan() },
+                    onPickFolder = { picker.launch(null) }
+                )
+                3 -> LogPage(p)
+                else -> HomeContent(
+                    p, scroll, running, uptimeMin, port, lanIp, count, memMb, threads,
+                    onToggle = { toggleServer() },
+                    onRescan = { rescan() },
+                    onPickFolder = { picker.launch(null) },
+                    onOpenLog = { tab = 2; page = 3 }
                 )
             }
-
-            Spacer(Modifier.height(12.dp))
-
-            Column(Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp))) {
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        autoStart = !autoStart
-                        Settings.setServerEnabled(ctx, autoStart)
-                    }.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("开机自动启动", fontSize = 15.sp, color = p.text)
-                        Text("手动开启过服务器后生效", fontSize = 11.sp, color = p.sub)
-                    }
-                    Text(
-                        if (autoStart) "已开启" else "已关闭",
-                        fontSize = 13.sp,
-                        color = if (autoStart) Green else p.sub
-                    )
-                }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(p.divider))
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        portDraft = port.toString()
-                        editingPort = !editingPort
-                    }.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("服务端口", fontSize = 15.sp, color = p.text, modifier = Modifier.weight(1f))
-                    Text(port.toString(), fontSize = 13.sp, color = p.sub)
-                    Spacer(Modifier.width(6.dp))
-                    Text("›", fontSize = 16.sp, color = p.sub)
-                }
-                if (editingPort) {
-                    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-                        BasicField(p, portDraft) { portDraft = it.filter { c -> c.isDigit() }.take(5) }
-                        Spacer(Modifier.height(10.dp))
-                        PillButton("保存端口", Blue, Modifier.fillMaxWidth()) {
-                            val v = portDraft.toIntOrNull()
-                            if (v == null || v < 1024 || v > 65535) {
-                                toast(ctx, "请输入 1024-65535")
-                            } else {
-                                Settings.setPort(ctx, v)
-                                port = v
-                                editingPort = false
-                                toast(ctx, if (running) "已保存，重启服务器后生效" else "已保存")
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(132.dp))
         }
 
-        Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 14.dp)) {
-            Row(
-                Modifier
-                    .background(p.cardAlt, RoundedCornerShape(50))
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val items = listOf("首页", "媒体库", "日志", "设置")
-                items.forEachIndexed { i, label ->
-                    Box(
-                        Modifier
-                            .background(
-                                if (tab == i) Blue.copy(alpha = 0.16f) else Color.Transparent,
-                                RoundedCornerShape(50)
-                            )
-                            .clickable {
-                                tab = i
-                                when (i) {
-                                    1 -> scope.launch { scroll.animateScrollTo((scroll.maxValue * 0.35f).toInt()) }
-                                    2 -> ctx.startActivity(Intent(ctx, LogActivity::class.java))
-                                    3 -> scope.launch { scroll.animateScrollTo(scroll.maxValue) }
-                                    else -> scope.launch { scroll.animateScrollTo(0) }
-                                }
-                            }
-                            .padding(horizontal = 18.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            label,
-                            fontSize = 13.sp,
-                            fontWeight = if (tab == i) FontWeight.Medium else FontWeight.Normal,
-                            color = if (tab == i) Blue else p.sub
-                        )
+        /* ---------- 底部导航：图标在上、小字在下 ---------- */
+        Box(Modifier.align(Alignment.BottomCenter)) {
+            AppNavBar(
+                tab = tab,
+                p = p,
+                onSelect = { i ->
+                    if (tab == i) return@AppNavBar
+                    tab = i
+                    page = when (i) {
+                        1 -> 1
+                        2 -> 3
+                        3 -> 2
+                        else -> 0
                     }
+                }
+            )
+        }
+    }
+}
+
+/* ---------------- 首页内容 ---------------- */
+
+/** 首页：服务器状态、地址、快捷操作、运行指标。设置与弹幕已拆到各自页面。 */
+@Composable
+private fun HomeContent(
+    p: Palette,
+    scroll: androidx.compose.foundation.ScrollState,
+    running: Boolean,
+    uptimeMin: Long,
+    port: Int,
+    lanIp: String?,
+    count: Int,
+    memMb: Long,
+    threads: Int,
+    onToggle: () -> Unit,
+    onRescan: () -> Unit,
+    onPickFolder: () -> Unit,
+    onOpenLog: () -> Unit = {}
+) {
+    val ctx = LocalContext.current
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(scroll)
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp)
+    ) {
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Embylite",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = p.text,
+            letterSpacing = (-0.5).sp
+        )
+        Spacer(Modifier.height(2.dp))
+        Text("本地 Emby 服务器", fontSize = 13.sp, color = p.sub)
+
+        Spacer(Modifier.height(16.dp))
+
+        HeroCard(p, running, uptimeMin, port, lanIp)
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(p.card, RoundedCornerShape(18.dp))
+                .height(56.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ActionCell(if (running) "停止" else "启动", if (running) Red else Blue, Modifier.weight(1f)) {
+                onToggle()
+            }
+            VDivider(p)
+            ActionCell("复制", Blue, Modifier.weight(1f)) {
+                val ip = lanIp
+                if (ip != null) copy(ctx, "http://$ip:$port")
+                else toast(ctx, "未获取到局域网地址，请连接 Wi-Fi")
+            }
+            VDivider(p)
+            ActionCell("刷新", Orange, Modifier.weight(1f)) { onRescan() }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            InfoCard(p, "媒体库", if (count < 0) "统计中" else "$count 部视频", Modifier.weight(1f)) {
+                onPickFolder()
+            }
+            InfoCard(p, "日志", "查看请求记录", Modifier.weight(1f)) {
+                onOpenLog()
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Column(
+            Modifier.fillMaxWidth().background(p.card, RoundedCornerShape(18.dp)).padding(16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("服务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = p.text)
+                Spacer(Modifier.weight(1f))
+                Text("点击数值可复制", fontSize = 11.sp, color = p.sub)
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth()) {
+                StatCell(p, "端口", port.toString(), Modifier.weight(1f)) {
+                    copy(ctx, port.toString())
+                }
+                StatCell(p, "本机", "127.0.0.1", Modifier.weight(1f)) {
+                    copy(ctx, "http://127.0.0.1:$port")
+                }
+                StatCell(p, "局域网", lanIp ?: "无", Modifier.weight(1f)) {
+                    val ip = lanIp
+                    if (ip != null) copy(ctx, "http://$ip:$port")
                 }
             }
         }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ProgressCard(p, "媒体库数量", count.coerceAtLeast(0), 200, Modifier.weight(1f))
+            ProgressCard(
+                p, "内存占用", memMb.toInt(), 512, Modifier.weight(1f),
+                suffix = "MB", extraLabel = "线程", extraValue = threads.toString()
+            )
+        }
+
+        Spacer(Modifier.height(132.dp))
     }
 }
 
 /* ---------------- 轻量 Text ---------------- */
 
 @Composable
-private fun Text(
+internal fun Text(
     text: String,
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
@@ -756,7 +596,7 @@ private fun ProgressCard(
 }
 
 @Composable
-private fun BasicField(p: Palette, value: String, onChange: (String) -> Unit) {
+internal fun BasicField(p: Palette, value: String, onChange: (String) -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
@@ -775,7 +615,13 @@ private fun BasicField(p: Palette, value: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-private fun PillButton(text: String, bg: Color, modifier: Modifier, onClick: () -> Unit) {
+internal fun PillButton(
+    text: String,
+    bg: Color,
+    modifier: Modifier,
+    textColor: Color = Color.White,
+    onClick: () -> Unit
+) {
     Box(
         modifier
             .background(bg, RoundedCornerShape(12.dp))
@@ -783,20 +629,20 @@ private fun PillButton(text: String, bg: Color, modifier: Modifier, onClick: () 
             .padding(vertical = 11.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = textColor)
     }
 }
 
 /* ---------------- 工具 ---------------- */
 
-private fun copy(ctx: Context, text: String) {
+internal fun copy(ctx: Context, text: String) {
     if (text.isEmpty()) return
     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("url", text))
     toast(ctx, "已复制：$text")
 }
 
-private fun toast(ctx: Context, msg: String) {
+internal fun toast(ctx: Context, msg: String) {
     Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
 }
 

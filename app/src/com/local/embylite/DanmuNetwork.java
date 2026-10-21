@@ -46,7 +46,7 @@ final class DanmuNetwork {
     static String request(String url, String body) {
         ERROR.remove();
         try {
-            Request.Builder builder = new Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", "LocalEmby/2.5.2");
+            Request.Builder builder = new Request.Builder().url(url).header("Accept", "application/json").header("User-Agent", "Embylite/2.6.0");
             if (body != null) builder.post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"), body));
             try (Response response = CLIENT.newCall(builder.build()).execute()) {
                 if (!response.isSuccessful()) { ERROR.set("HTTP " + response.code()); return null; }

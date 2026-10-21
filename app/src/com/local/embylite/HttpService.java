@@ -43,7 +43,7 @@ public class HttpService extends Service {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             NotificationChannel ch = new NotificationChannel(
                     CHANNEL_ID, "服务器", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("本地影院服务器运行状态");
+            ch.setDescription("Embylite 服务器运行状态");
             nm.createNotificationChannel(ch);
         }
     }
@@ -98,7 +98,7 @@ public class HttpService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        b.setContentTitle(isServiceRunning ? "本地影院服务器运行中" : "本地影院服务器启动中")
+        b.setContentTitle(isServiceRunning ? "Embylite 服务器运行中" : "Embylite 服务器启动中")
                 .setContentText(content)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(pi)

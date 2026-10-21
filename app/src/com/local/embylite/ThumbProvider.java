@@ -58,7 +58,7 @@ public class ThumbProvider {
             p.setColor(0xFFAAAAAA);
             p.setTextSize(30);
             p.setTextAlign(android.graphics.Paint.Align.CENTER);
-            String t = (title == null || title.isEmpty()) ? "本地影院" : title;
+            String t = (title == null || title.isEmpty()) ? "Embylite" : title;
             if (t.length() > 12) t = t.substring(0, 12);
             p.setAntiAlias(true);
             c.drawText(t, w / 2f, h / 2f, p);

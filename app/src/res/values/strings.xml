@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">本地影院</string>
-    <string name="title_main">本地影院 · Emby 模拟服务器</string>
+    <string name="app_name">Embylite</string>
+    <string name="title_main">Embylite · Emby 模拟服务器</string>
     <string name="label_folder">视频路径</string>
     <string name="hint_folder">/sdcard/Movies（留空则扫描全手机视频）</string>
     <string name="btn_save_path">保存并刷新</string>

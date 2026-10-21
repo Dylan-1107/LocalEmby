@@ -350,7 +350,7 @@ public class EmbyHttpServer {
             if (jpg == null && item != null) jpg = MetadataStore.posterBytes(ctx, "episode_" + item.id);
             if (jpg == null && item != null) jpg = ThumbProvider.get(ctx, item);
             if (jpg == null) {
-                jpg = ThumbProvider.placeholder(ctx, item == null ? "本地影院" : item.name);
+                jpg = ThumbProvider.placeholder(ctx, item == null ? "Embylite" : item.name);
             }
             sendResp(out, EmbyApi.Resp.bytes(200, "image/jpeg", jpg), head);
             return 200;

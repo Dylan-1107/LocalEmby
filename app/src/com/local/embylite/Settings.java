@@ -12,6 +12,7 @@ public final class Settings {
     private static final String KEY_PORT = "port";
     private static final String KEY_SERVER_ENABLED = "server_enabled";
     private static final String KEY_DANMU_API = "danmu_api";
+    private static final String KEY_ROOT_KEEP_ALIVE = "root_keep_alive";
     private static final int DEFAULT_PORT = 8096;
 
     private Settings() {
@@ -61,5 +62,14 @@ public final class Settings {
 
     public static void setDanmuApi(Context ctx, String url) {
         prefs(ctx).edit().putString(KEY_DANMU_API, url == null ? "" : url.trim()).apply();
+    }
+
+    /** Root 保活是否开启（仅在用户显式开启后才会执行 su 操作）。 */
+    public static boolean isRootKeepAlive(Context ctx) {
+        return prefs(ctx).getBoolean(KEY_ROOT_KEEP_ALIVE, false);
+    }
+
+    public static void setRootKeepAlive(Context ctx, boolean enabled) {
+        prefs(ctx).edit().putBoolean(KEY_ROOT_KEEP_ALIVE, enabled).apply();
     }
 }

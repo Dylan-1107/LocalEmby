@@ -259,8 +259,8 @@ public class EmbyApi {
         JSONObject j = obj();
         put(j, "Id", SERVER_ID);
         put(j, "ServerId", SERVER_ID);
-        put(j, "ServerName", "本地影院");
-        put(j, "FriendlyName", "本地影院");
+        put(j, "ServerName", "Embylite");
+        put(j, "FriendlyName", "Embylite");
         put(j, "Version", "4.7.13.0");
         put(j, "ProductName", "Emby Server");
         put(j, "OperatingSystem", "Android");
