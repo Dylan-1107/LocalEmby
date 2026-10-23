@@ -1,5 +1,11 @@
 # Embylite（原 LocalEmby）
 
+> [!IMPORTANT]
+> **本项目全部由 AI 完成。**
+> 从技术选型、架构设计、代码编写、调试排错，到文档撰写与发版说明，全部由 AI 独立完成；人类只负责提出需求、提供测试设备、验收结果。
+> **仓库里的每一行代码、每一份文档都出自 AI 之手，没有一行是人工手写的。** 详见文末 [关于 AI 参与](#关于-ai-参与)。
+
+![AI](https://img.shields.io/badge/code-100%25%20AI--written-E5484D?style=flat-square)
 [![release](https://img.shields.io/github/v/release/Dylan-1107/LocalEmby?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest)
 [![download](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-APK-3482FF?style=flat-square)](https://github.com/Dylan-1107/LocalEmby/releases/latest/download/LocalEmby.apk)
 ![minSdk](https://img.shields.io/badge/minSdk-26-30D158?style=flat-square)
@@ -206,6 +212,25 @@ GET  {base}/api/v2/comment/{id}  ?withRelated=true    → {count, comments:[{p,m
 - **APK 体积约 7MB**：Compose 运行时占用较大
 - **`MediaStreams` 为占位信息**：部分客户端会显示固定的 1080p H.264 / AAC，实际轨道由播放器自行探测
 - 小米等 ROM 对后台限制较严，若服务器被杀，可在系统设置里允许自启动并锁定后台
+
+## 关于 AI 参与
+
+**这个项目全部由 AI 完成。**
+
+Embylite 不是一个"AI 辅助写了几段代码"的项目，而是从零到发版全程由 AI 驱动：需求由人类提出，其余全部由 AI 落地。
+
+| 环节 | 由谁完成 |
+|---|---|
+| 提出需求、决定功能取舍、最终验收 | 人类（项目所有者） |
+| 技术选型与架构设计 | AI |
+| 全部 Java / Kotlin 代码编写 | AI |
+| 调试排错、真机联调（adb / logcat / 截图逐帧比对） | AI |
+| 剧集解析、刮削策略的回归测试用例 | AI |
+| README、交接文档、Release 说明 | AI |
+
+人类在这个项目里**不写代码**，只做三件事：说清楚想要什么、提供一台真机供验证、对结果说"行"或"不行"。所有代码、所有文档、所有排查过程都出自 AI。
+
+这样做的好处是迭代速度：一个功能从"提需求"到"真机验证通过"通常在一次对话内完成。代价是每个结论都必须实测——所以仓库里才会有一堆回归测试和 `docs/BUILD-HANDOFF.md` 这样的交接文档，让下一个人（或下一个 AI）能独立接续。
 
 ## 免责声明
 
