@@ -232,6 +232,11 @@ Embylite 不是一个"AI 辅助写了几段代码"的项目，而是从零到发
 
 这样做的好处是迭代速度：一个功能从"提需求"到"真机验证通过"通常在一次对话内完成。代价是每个结论都必须实测——所以仓库里才会有一堆回归测试和 `docs/BUILD-HANDOFF.md` 这样的交接文档，让下一个人（或下一个 AI）能独立接续。
 
+## 数据来源与致谢
+
+- **弹幕**：弹幕通过弹弹play 兼容接口获取，服务端基于开源项目 [danmu_api](https://github.com/huangxd-/danmu_api)（作者 [huangxd-](https://github.com/huangxd-)）自部署，仓库内置的默认弹幕源即该项目的一个部署实例。弹幕内容版权归原平台及发布者所有。
+- **元数据刮削**：影视元数据（标题、简介、评分、演职人员、海报等）来自 [TMDB](https://www.themoviedb.org/) 的公开 API。This product uses the TMDB API but is not endorsed or certified by TMDB.
+
 ## 免责声明
 
 本项目仅用于**管理和播放你自己拥有的本地媒体文件**，不提供、不索引、不托管任何影视内容。刮削与弹幕数据来自第三方公开服务，请遵守相应服务条款与当地法律法规。
