@@ -52,7 +52,8 @@ internal fun SettingsScreen(
     onPortSaved: (Int) -> Unit,
     onTreeLabelChanged: (String) -> Unit,
     onRescan: () -> Unit,
-    onPickFolder: () -> Unit
+    onPickFolder: () -> Unit,
+    onPickFolderManual: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -68,6 +69,18 @@ internal fun SettingsScreen(
     var tmdbDraft by remember { mutableStateOf(Settings.getTmdbKey(ctx)) }
 
     var rootEnabled by remember { mutableStateOf(Settings.isRootKeepAlive(ctx)) }
+
+    /* 当前「选择文件夹」会落到哪个系统 App：小米文件管理 / 系统文件选择器 */
+    val pickerLabel = remember { SystemFolderPicker.targetLabel(ctx) }
+
+    /* 版本号取自 PackageManager，避免手写常量发版后忘记更新 */
+    val versionLabel = remember {
+        runCatching {
+            val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+            "${info.versionName} ($code)"
+        }.getOrDefault("未知")
+    }
     var rootState by remember { mutableStateOf(RootKeepAlive.Status.UNKNOWN) }
     var rootBusy by remember { mutableStateOf(false) }
 
@@ -120,6 +133,17 @@ internal fun SettingsScreen(
                 PillButton("选择文件夹", Blue, Modifier.weight(1f)) { onPickFolder() }
                 PillButton("刷新媒体库", p.cardAlt, Modifier.weight(1f), p.text) { onRescan() }
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "目录选择器：$pickerLabel",
+                fontSize = 11.sp, color = p.sub
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "选不到根目录 / Download？用内置浏览 ›",
+                fontSize = 11.sp, color = Blue,
+                modifier = Modifier.clickable { onPickFolderManual() }.padding(vertical = 4.dp)
+            )
             if (treeLabel.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Divider(p)
@@ -402,7 +426,7 @@ internal fun SettingsScreen(
         SettingCard(p) {
             SettingRow(p, "应用名称", "Embylite", null, null)
             Divider(p)
-            SettingRow(p, "版本", "2.7.0 (12)", null, null)
+            SettingRow(p, "版本", versionLabel, null, null)
             Divider(p)
             SettingRow(
                 p, "说明",

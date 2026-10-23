@@ -42,6 +42,8 @@ ui*.xml
 *.webp
 # 允许仓库内的文档截图
 !docs/*.png
+# 允许应用资源图片（启动图标等，构建必需，此前被 *.png 误伤导致干净 clone 无法构建）
+!app/src/res/**/*.png
 
 # 个人数据
 rename_backup_*.txt

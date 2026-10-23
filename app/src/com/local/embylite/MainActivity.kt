@@ -136,7 +136,7 @@ private fun HomeScreen() {
     val hazeState = remember { HazeState() }
     var allFiles by remember { mutableStateOf(VideoLibrary.hasAllFilesAccess()) }
     var prevAllFiles by remember { mutableStateOf(allFiles) }
-    /* 有「所有文件访问」权限时用应用内目录浏览器（不受系统 SAF 限制），否则回退系统选择器 */
+    /* 内置目录浏览只在「系统选择器拉不起来」或「要选 SAF 禁选的根目录/Download」时使用 */
     var showFolderPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -191,29 +191,56 @@ private fun HomeScreen() {
         running = HttpService.isServiceRunning
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatching {
-                ctx.contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
+    /** 应用系统目录选择器返回的 tree URI：持久授权 + 反解绝对路径（扫描仍走 File API）。 */
+    fun applyTreeUri(uri: Uri) {
+        runCatching {
+            ctx.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        Settings.setTreeUri(ctx, uri.toString())
+        // 有「所有文件访问权限」时 VideoLibrary 优先按绝对路径扫，所以要把 tree URI 反解成路径存下来，
+        // 否则用户选了子目录也会被当成「未指定目录」而退回全盘扫描。
+        val path = SystemFolderPicker.treeUriToPath(uri)
+        val readable = path != null && runCatching {
+            path.let { java.io.File(it).listFiles() != null }
+        }.getOrDefault(false)
+        Settings.setFolderPath(ctx, if (readable) path!! else "")
+        EmbyLog.info("目录选择：tree=$uri → path=$path，可读=$readable")
+        treeLabel = folderDisplayPath(ctx)
+        VideoLibrary.invalidate()
+        scope.launch {
+            count = withContext(Dispatchers.IO) {
+                runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }
+                    .getOrDefault(-1)
             }
-            Settings.setTreeUri(ctx, uri.toString())
-            treeLabel = folderDisplayPath(ctx)
-            VideoLibrary.invalidate()
-            scope.launch {
-                count = withContext(Dispatchers.IO) {
-                    runCatching { VideoLibrary.get(ctx, Settings.getFolderPath(ctx)).size }
-                        .getOrDefault(-1)
+            toast(
+                ctx,
+                when {
+                    !readable -> "已选择目录，但读取被系统拒绝，请先授予「所有文件访问权限」"
+                    count >= 0 -> "已选择目录，共 $count 部"
+                    else -> "已选择目录，但扫描失败，请查看日志"
                 }
-                toast(ctx, "已选择目录，共 $count 部")
-            }
+            )
         }
     }
 
-    /* 选目录入口：有全盘权限 → 内置浏览器；否则回退系统 SAF 选择器 */
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val uri = res.data?.data
+        if (res.resultCode == android.app.Activity.RESULT_OK && uri != null) applyTreeUri(uri)
+    }
+
+    /* 选目录入口：走系统文件管理器（优先小米文件管理，没有则系统选择器）。
+     * 只有系统选择器完全拉不起来时，才回退到内置浏览。 */
     fun pickFolder() {
-        if (VideoLibrary.hasAllFilesAccess()) showFolderPicker = true else picker.launch(null)
+        val intent = SystemFolderPicker.buildIntent(ctx, treeLabel.ifEmpty { null })
+        runCatching { picker.launch(intent) }
+            .onFailure {
+                EmbyLog.info("目录选择：系统选择器拉起失败 ${it.javaClass.simpleName}，回退内置浏览")
+                toast(ctx, "未找到系统文件管理器，改用内置浏览")
+                showFolderPicker = true
+            }
     }
 
     fun applyPickedFolder(path: String) {
@@ -258,7 +285,8 @@ private fun HomeScreen() {
                     onPortSaved = { port = it },
                     onTreeLabelChanged = { treeLabel = it },
                     onRescan = { rescan() },
-                    onPickFolder = { pickFolder() }
+                    onPickFolder = { pickFolder() },
+                    onPickFolderManual = { showFolderPicker = true }
                 )
                 else -> HomeContent(
                     p, scroll, running, uptimeMin, port, lanIp, count, memMb, threads,
